@@ -1,0 +1,75 @@
+---
+deployment:
+  tasks:
+    # Set the deployment path - update 'yourusername' with your actual cPanel username
+    - export DEPLOYPATH=/home/yourusername/public_html/
+    
+    # Create necessary directories if they don't exist
+    - mkdir -p $DEPLOYPATH/assets
+    - mkdir -p $DEPLOYPATH/backend
+    - mkdir -p $DEPLOYPATH/bootstrap
+    - mkdir -p $DEPLOYPATH/build
+    - mkdir -p $DEPLOYPATH/DB
+    - mkdir -p $DEPLOYPATH/dist
+    - mkdir -p $DEPLOYPATH/documentation
+    - mkdir -p $DEPLOYPATH/elitelink
+    - mkdir -p $DEPLOYPATH/js
+    - mkdir -p $DEPLOYPATH/languages
+    - mkdir -p $DEPLOYPATH/layouts
+    - mkdir -p $DEPLOYPATH/pages
+    - mkdir -p $DEPLOYPATH/plugins
+    - mkdir -p $DEPLOYPATH/uploads
+    
+    # Copy all PHP files in root directory
+    - /bin/cp *.php $DEPLOYPATH
+    - /bin/cp *.html $DEPLOYPATH
+    
+    # Copy configuration and dependency files
+    - /bin/cp composer.json $DEPLOYPATH
+    - /bin/cp package.json $DEPLOYPATH
+    - /bin/cp package-lock.json $DEPLOYPATH
+    - /bin/cp Gruntfile.js $DEPLOYPATH
+    - /bin/cp LICENSE $DEPLOYPATH
+    - /bin/cp README.md $DEPLOYPATH
+    - /bin/cp start.sh $DEPLOYPATH
+    
+    # Copy JavaScript files
+    - /bin/cp *.js $DEPLOYPATH
+    
+    # Copy image and document files
+    - /bin/cp *.jpg $DEPLOYPATH
+    - /bin/cp *.jpeg $DEPLOYPATH
+    - /bin/cp changelog $DEPLOYPATH
+    
+    # Copy directories and their contents recursively
+    - /bin/cp -R assets/* $DEPLOYPATH/assets/
+    - /bin/cp -R backend/* $DEPLOYPATH/backend/
+    - /bin/cp -R bootstrap/* $DEPLOYPATH/bootstrap/
+    - /bin/cp -R build/* $DEPLOYPATH/build/
+    - /bin/cp -R DB/* $DEPLOYPATH/DB/
+    - /bin/cp -R dist/* $DEPLOYPATH/dist/
+    - /bin/cp -R documentation/* $DEPLOYPATH/documentation/
+    - /bin/cp -R elitelink/* $DEPLOYPATH/elitelink/
+    - /bin/cp -R js/* $DEPLOYPATH/js/
+    - /bin/cp -R languages/* $DEPLOYPATH/languages/
+    - /bin/cp -R layouts/* $DEPLOYPATH/layouts/
+    - /bin/cp -R pages/* $DEPLOYPATH/pages/
+    - /bin/cp -R plugins/* $DEPLOYPATH/plugins/
+    - /bin/cp -R uploads/* $DEPLOYPATH/uploads/
+    
+    # Set proper permissions for PHP files and directories
+    - find $DEPLOYPATH -type f -name "*.php" -exec chmod 644 {} \;
+    - find $DEPLOYPATH -type d -exec chmod 755 {} \;
+    
+    # Set write permissions for uploads directory
+    - chmod 755 $DEPLOYPATH/uploads/
+    - chmod 755 $DEPLOYPATH/backend/
+    
+    # Optional: Install composer dependencies if needed (uncomment if required)
+    # - cd $DEPLOYPATH && /usr/local/bin/composer install --no-dev --optimize-autoloader
+    
+    # Optional: Clear any cache files (uncomment if your app has cache)
+    # - rm -rf $DEPLOYPATH/cache/*
+    
+    # Create .htaccess file for security (uncomment and modify as needed)
+    # - echo "Options -Indexes" > $DEPLOYPATH/.htaccess

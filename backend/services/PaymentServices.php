@@ -115,7 +115,11 @@ class PaymentService {
                     'full_payment' => 0,
                     'payment_date' => $paymentDate,
                     'mode_of_payment' => 'credit',
-                    'note' => $note
+                    'salesperson' => $salesperson,
+                    'note' => $note,
+                    'description' => $description,
+                    'currency_name' => $currencyName,
+                    'currency_roe' => $currencyRoe
                 ]);
                 
                 $this->updateCustomerCreditBalance($customerId, $amountFromCredit, 'deduct');
@@ -163,7 +167,7 @@ class PaymentService {
         $stmt = $this->conn->prepare("
             SELECT COALESCE(SUM(ABS(payment_amount)), 0) as total_paid
             FROM payment_receipts
-            WHERE invoice_number = ? AND payment_type = 'payment'
+            WHERE invoice_number = ? AND invoice_number != '0'
         ");
         $stmt->bind_param("s", $invoiceNumber);
         $stmt->execute();
@@ -207,8 +211,8 @@ class PaymentService {
         return round($result['credit'] ?? 0, 3);
     }
     
-    // Insert payment record with all fields
-    private function insertPaymentRecord($data) {
+    // Insert payment record with all fields (made public for flexibility)
+    public function insertPaymentRecord($data) {
         $stmt = $this->conn->prepare("
             INSERT INTO payment_receipts (
                 customer_id, invoice_number, receipt_no, payment_amount, 
@@ -216,6 +220,13 @@ class PaymentService {
                 salesperson, note, description, currency_name, currency_roe
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ");
+        
+        // Ensure all variables are properly set for bind_param
+        $salesperson = $data['salesperson'] ?? '';
+        $note = $data['note'] ?? '';
+        $description = $data['description'] ?? '';
+        $currency_name = $data['currency_name'] ?? 'AED';
+        $currency_roe = $data['currency_roe'] ?? 1.0;
         
         $stmt->bind_param(
             "issdsissssssd",
@@ -227,11 +238,11 @@ class PaymentService {
             $data['full_payment'],
             $data['payment_date'],
             $data['mode_of_payment'],
-            $data['salesperson'] ?? '',
-            $data['note'] ?? '',
-            $data['description'] ?? '',
-            $data['currency_name'] ?? 'AED',
-            $data['currency_roe'] ?? 1.0
+            $salesperson,
+            $note,
+            $description,
+            $currency_name,
+            $currency_roe
         );
         
         return $stmt->execute();
@@ -246,86 +257,107 @@ class PaymentService {
     
     // Update invoice payment summary table
     public function updateInvoicePaymentSummary($invoiceNumber) {
-        $stmt = $this->conn->prepare("
-            SELECT 
-                s.shipment_id,
-                s.customer_id,
-                ROUND(COALESCE(SUM(sc.total_amount), 0), 3) as invoice_total,
-                ROUND(COALESCE(SUM(CASE WHEN pr.payment_type = 'payment' THEN ABS(pr.payment_amount) ELSE 0 END), 0), 3) as total_paid,
-                ROUND(COALESCE(SUM(CASE WHEN pr.payment_type = 'credit_deduction' THEN ABS(pr.payment_amount) ELSE 0 END), 0), 3) as total_credits_used
-            FROM shipments s
-            LEFT JOIN shipment_charges sc ON s.shipment_id = sc.shipment_id
-            LEFT JOIN payment_receipts pr ON s.invoice_number = pr.invoice_number
-            WHERE s.invoice_number = ?
-            GROUP BY s.invoice_number, s.shipment_id, s.customer_id
+        // Get basic invoice info first
+        $infoStmt = $this->conn->prepare("
+            SELECT shipment_id, customer_id 
+            FROM shipments 
+            WHERE invoice_number = ?
         ");
+        $infoStmt->bind_param("s", $invoiceNumber);
+        $infoStmt->execute();
+        $invoiceInfo = $infoStmt->get_result()->fetch_assoc();
         
-        $stmt->bind_param("s", $invoiceNumber);
-        $stmt->execute();
-        $result = $stmt->get_result()->fetch_assoc();
-        
-        if ($result) {
-            $invoiceTotal = $result['invoice_total'];
-            $totalPaid = $result['total_paid'];
-            $totalCreditsUsed = $result['total_credits_used'];
-            $balanceDue = round($invoiceTotal - $totalPaid - $totalCreditsUsed, 3);
-            
-            // Ensure balance is not negative
-            if ($balanceDue < 0) {
-                $balanceDue = 0;
-            }
-            
-            // Determine payment status using whole number comparison
-            if (round($balanceDue, 0) === 0) {
-                $paymentStatus = 'paid';
-            } elseif (round($totalPaid, 0) > 0 || round($totalCreditsUsed, 0) > 0) {
-                $paymentStatus = 'partial';
-            } else {
-                $paymentStatus = 'unpaid';
-            }
-            
-            // Get last payment date
-            $lastPaymentStmt = $this->conn->prepare("
-                SELECT MAX(payment_date) as last_payment_date
-                FROM payment_receipts
-                WHERE invoice_number = ?
-            ");
-            $lastPaymentStmt->bind_param("s", $invoiceNumber);
-            $lastPaymentStmt->execute();
-            $lastPaymentResult = $lastPaymentStmt->get_result()->fetch_assoc();
-            
-            // Insert or update summary
-            $summaryStmt = $this->conn->prepare("
-                INSERT INTO invoice_payment_summary (
-                    invoice_number, shipment_id, customer_id, invoice_total,
-                    total_paid, total_credits_used, balance_due, payment_status, last_payment_date
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON DUPLICATE KEY UPDATE
-                    invoice_total = VALUES(invoice_total),
-                    total_paid = VALUES(total_paid),
-                    total_credits_used = VALUES(total_credits_used),
-                    balance_due = VALUES(balance_due),
-                    payment_status = VALUES(payment_status),
-                    last_payment_date = VALUES(last_payment_date)
-            ");
-            
-            $summaryStmt->bind_param(
-                "sisddddss",
-                $invoiceNumber,
-                $result['shipment_id'],
-                $result['customer_id'],
-                $invoiceTotal,
-                $totalPaid,
-                $totalCreditsUsed,
-                $balanceDue,
-                $paymentStatus,
-                $lastPaymentResult['last_payment_date']
-            );
-            
-            return $summaryStmt->execute();
+        if (!$invoiceInfo) {
+            return false;
         }
         
-        return false;
+        // Pre-aggregate charges by invoice with 3 decimal precision (matching analysis document)
+        $chargesStmt = $this->conn->prepare("
+            SELECT ROUND(COALESCE(SUM(sc.total_amount), 0), 3) AS invoice_total
+            FROM shipments s
+            LEFT JOIN shipment_charges sc ON s.shipment_id = sc.shipment_id
+            WHERE s.invoice_number = ?
+        ");
+        $chargesStmt->bind_param("s", $invoiceNumber);
+        $chargesStmt->execute();
+        $chargesResult = $chargesStmt->get_result()->fetch_assoc();
+        $invoiceTotal = $chargesResult['invoice_total'];
+        
+        // Pre-aggregate payments by invoice (matching PHP logic exactly) with 3 decimal precision
+        $paymentsStmt = $this->conn->prepare("
+            SELECT 
+                ROUND(COALESCE(SUM(ABS(payment_amount)), 0), 3) AS total_paid
+            FROM payment_receipts
+            WHERE invoice_number = ? AND invoice_number != '0'
+        ");
+        $paymentsStmt->bind_param("s", $invoiceNumber);
+        $paymentsStmt->execute();
+        $paymentsResult = $paymentsStmt->get_result()->fetch_assoc();
+        $totalPaid = $paymentsResult['total_paid'];
+        
+        // Get credit deductions separately for tracking
+        $creditsStmt = $this->conn->prepare("
+            SELECT 
+                ROUND(COALESCE(SUM(ABS(payment_amount)), 0), 3) AS total_credits_used
+            FROM payment_receipts
+            WHERE invoice_number = ? AND payment_type = 'credit_deduction'
+        ");
+        $creditsStmt->bind_param("s", $invoiceNumber);
+        $creditsStmt->execute();
+        $creditsResult = $creditsStmt->get_result()->fetch_assoc();
+        $totalCreditsUsed = $creditsResult['total_credits_used'];
+        
+        // Calculate balance due using the same logic as the analysis document
+        $balanceDue = round(max(0, $invoiceTotal - $totalPaid), 3);
+        
+        // Determine payment status using whole number comparison (matching analysis document)
+        if (round($totalPaid, 0) >= round($invoiceTotal, 0)) {
+            $paymentStatus = 'paid';
+        } elseif (round($totalPaid, 0) > 0) {
+            $paymentStatus = 'partial';
+        } else {
+            $paymentStatus = 'unpaid';
+        }
+        
+        // Get last payment date
+        $lastPaymentStmt = $this->conn->prepare("
+            SELECT MAX(payment_date) as last_payment_date
+            FROM payment_receipts
+            WHERE invoice_number = ? AND invoice_number != '0'
+        ");
+        $lastPaymentStmt->bind_param("s", $invoiceNumber);
+        $lastPaymentStmt->execute();
+        $lastPaymentResult = $lastPaymentStmt->get_result()->fetch_assoc();
+        
+        // Insert or update summary
+        $summaryStmt = $this->conn->prepare("
+            INSERT INTO invoice_payment_summary (
+                invoice_number, shipment_id, customer_id, invoice_total,
+                total_paid, total_credits_used, balance_due, payment_status, last_payment_date
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON DUPLICATE KEY UPDATE
+                invoice_total = VALUES(invoice_total),
+                total_paid = VALUES(total_paid),
+                total_credits_used = VALUES(total_credits_used),
+                balance_due = VALUES(balance_due),
+                payment_status = VALUES(payment_status),
+                last_payment_date = VALUES(last_payment_date)
+        ");
+        
+        $summaryStmt->bind_param(
+            "sisddddss",
+            $invoiceNumber,
+            $invoiceInfo['shipment_id'],
+            $invoiceInfo['customer_id'],
+            $invoiceTotal,
+            $totalPaid,
+            $totalCreditsUsed,
+            $balanceDue,
+            $paymentStatus,
+            $lastPaymentResult['last_payment_date']
+        );
+        
+        return $summaryStmt->execute();
     }
     
     // Get customer invoices summary with payment status
@@ -362,7 +394,7 @@ class PaymentService {
                     invoice_number,
                     ROUND(SUM(ABS(payment_amount)), 3) AS total_paid
                 FROM payment_receipts
-                WHERE payment_type = 'payment'
+                WHERE invoice_number != '0'
                 GROUP BY invoice_number
             ) payments ON s.invoice_number = payments.invoice_number
             WHERE s.customer_id = ?
@@ -482,8 +514,11 @@ class PaymentService {
                 'full_payment' => 0,
                 'payment_date' => date('Y-m-d H:i:s'),
                 'mode_of_payment' => 'credit',
+                'salesperson' => '',
                 'note' => $note,
-                'description' => $description
+                'description' => $description,
+                'currency_name' => 'AED',
+                'currency_roe' => 1.0
             ]);
             
             // Update credit balance
@@ -510,7 +545,7 @@ class PaymentService {
             SELECT 
                 s.invoice_number,
                 ROUND(COALESCE(SUM(sc.total_amount), 0), 3) as invoice_total,
-                ROUND(COALESCE(SUM(CASE WHEN pr.payment_type = 'payment' THEN ABS(pr.payment_amount) ELSE 0 END), 0), 3) as total_paid,
+                ROUND(COALESCE(SUM(CASE WHEN pr.invoice_number != '0' THEN ABS(pr.payment_amount) ELSE 0 END), 0), 3) as total_paid,
                 ROUND(COALESCE(SUM(CASE WHEN pr.payment_type = 'credit_deduction' THEN ABS(pr.payment_amount) ELSE 0 END), 0), 3) as total_credits_used
             FROM shipments s
             LEFT JOIN shipment_charges sc ON s.shipment_id = sc.shipment_id
