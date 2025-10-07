@@ -56,6 +56,42 @@
   font-size: 13px;
   color: #000;
 }
+
+.full-payment-card {
+  background-color: #e8f5e8;
+  border: 1px solid #28a745;
+  border-radius: 8px;
+  padding: 10px 14px;
+  color: #000;
+  box-shadow: 0 2px 8px rgba(40, 167, 69, 0.1);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.full-payment-card:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(40, 167, 69, 0.15);
+}
+
+.full-payment-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 600;
+  color: #155724;
+  margin: 0;
+  font-size: 14px;
+}
+
+.full-payment-toggle input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: #28a745;
+  cursor: pointer;
+}
+
+.full-payment-toggle span {
+  font-size: 14px;
+}
 </style>
 
 
@@ -160,7 +196,7 @@
                                 while ($row = $result->fetch_assoc()) {
                                     $user_id = $row['u_id'];
                                     $user_name = $row['u_name'];
-                                    echo "<option value='$user_id'>$user_name</option>";
+                                    echo "<option value='$user_name'>$user_name</option>";
                                 }
                             }
                           ?>
@@ -288,6 +324,14 @@
                               </select>
 
                             </div>
+                            <div class="col-md-3">
+                                <div class="full-payment-card">
+                                    <label class="full-payment-toggle" for="fullPaymentCheckbox">
+                                        <input type="checkbox" id="fullPaymentCheckbox" onchange="handleFullPaymentChange()">
+                                        <span>Full Payment</span>
+                                    </label>
+                                </div>
+                            </div>
                           </div>
 
 
@@ -357,7 +401,7 @@
                                     <label for="total">&nbsp;</label> <br>
                                     <button type="button" class="btn btn-primary" onclick="calculateTotal()">Calculate Total</button>
                                 </div>
-                                <div class="col-md-3"></div>
+                                <div class="col-md-6"></div>
 
                             </div>
                             <br>
@@ -396,6 +440,33 @@
         const today = new Date().toISOString().split('T')[0];
         document.getElementById('date').value = today;
     });
+
+// Handle Full Payment checkbox functionality
+function handleFullPaymentChange() {
+    const checkbox = document.getElementById('fullPaymentCheckbox');
+    const amountField = document.getElementById('unit_price');
+    const totalAmountField = document.getElementById('totalAmount');
+    const remainingAmount = parseFloat(document.getElementById('amount-remaining').textContent) || 0;
+    
+    if (checkbox.checked) {
+        // Set the remaining amount and disable the field
+        amountField.value = remainingAmount.toFixed(2);
+        amountField.disabled = true;
+        amountField.style.backgroundColor = '#f0f0f0';
+        
+        // Automatically calculate total
+        calculateTotal();
+    } else {
+        // Enable the field and clear it
+        amountField.disabled = false;
+        amountField.value = '';
+        amountField.style.backgroundColor = '';
+        
+        // Clear both the totalAmount and total fields
+        totalAmountField.value = '';
+        document.getElementById('total').value = '';
+    }
+}
 function formatDate(dateString) {
     if(!dateString){
       return '';

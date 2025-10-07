@@ -195,8 +195,6 @@ $(document).ready(function() {
         const tbody = $('#soaTable tbody');
         tbody.empty(); // Clear previous data
 
-        let cumulativeBalance = 0;
-
         if (data.length === 0) {
             tbody.append('<tr><td colspan="7" style="text-align:center;">No due invoices found for the selected date.</td></tr>');
             $('#totalDueAmount').text('0.00');
@@ -204,7 +202,6 @@ $(document).ready(function() {
         }
 
         data.forEach(row => {
-            cumulativeBalance += parseFloat(row.balance);
             const newRow = `
                 <tr>
                     <td>${row.invoice_number}</td>
@@ -219,7 +216,9 @@ $(document).ready(function() {
             tbody.append(newRow);
         });
 
-        $('#totalDueAmount').text(cumulativeBalance.toFixed(2));
+        // Use the last cumulative balance as the total amount due
+        const lastCumulativeBalance = data.length > 0 ? parseFloat(data[data.length - 1].cumulative_balance.replace(/,/g, '')) : 0;
+        $('#totalDueAmount').text(lastCumulativeBalance.toFixed(2));
     }
 
     // Print SOA button click handler
@@ -237,10 +236,8 @@ $(document).ready(function() {
             const originalTitle = document.title;
             document.title = `SOA_${customerData.name}_${selectedDate}`;
             
-            let totalDue = 0;
-            soaData.forEach(row => {
-                totalDue += parseFloat(row.balance.replace(/,/g, ''));
-            });
+            // Use the last cumulative balance as the total amount due
+            const totalDue = soaData.length > 0 ? parseFloat(soaData[soaData.length - 1].cumulative_balance.replace(/,/g, '')) : 0;
 
             let printContent = `
                 <html>

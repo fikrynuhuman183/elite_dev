@@ -136,6 +136,9 @@ $totalProfit = 0;
                                       // Calculate due
                                       $due = max(0, $total - $paid);
 
+                                      // Check if invoice is fully paid (either status is 'paid' or paid amount equals total)
+                                      $isFullyPaid = ($row['status'] == 'paid') || (round($paid, 3) >= round($total, 3));
+
                                       // Format for display
                                       $total_fmt = number_format($total, 3);
                                       $paid_fmt = number_format($paid, 3);
@@ -161,10 +164,10 @@ $totalProfit = 0;
                                   
                                   <td>
                                     
+                                    <!-- Credit note button - always available -->
+                                    <a href="./add_credit_note.php?invoice_id=<?= $shipment_id ?>" class="btn btn-primary">Add credit note</a>
 
-                                    <?php if ($row['status'] != 'paid') { ?>
-                                      <a href="./add_credit_note.php?invoice_id=<?= $shipment_id ?>" class="btn btn-primary">Add credit note</a>
-
+                                    <?php if (!$isFullyPaid) { ?>
                                       <?php if ($u_id == 1) { ?>
                                           <button onclick="deleteInvoice('<?= $shipment_id ?>')" class="btn btn-danger">Delete</button>
                                       <?php } ?>
@@ -174,8 +177,10 @@ $totalProfit = 0;
                                         </select>
                                     <?php } ?>
 
-                                    <?php if ($row['status'] != 'paid') { ?>
+                                    <?php if (!$isFullyPaid) { ?>
                                         <button onclick="window.location.href='invoice_receipt.php?invoice_id=<?= $invoice_number ?>'" class="btn btn-success">Add Payment</button>
+                                    <?php } else { ?>
+                                        <button class="btn btn-success" disabled title="Invoice is fully paid">Fully Paid</button>
                                     <?php } ?>
                                     <button onclick="window.location.href='invoice_payment_history.php?invoice_id=<?= $invoice_number ?>'" class="btn btn-info">View Transactions History</button>
 

@@ -1,6 +1,12 @@
 <?php
 include './layouts/header.php';
 include './layouts/sidebar.php';
+
+// Include PaymentService class
+require_once 'backend/services/PaymentServices.php';
+
+// Initialize PaymentService
+$paymentService = new PaymentService($conn);
 ?>
 
 
@@ -46,69 +52,16 @@ include './layouts/sidebar.php';
                         $customers_rs = $conn->query($customers_sql);
 
                         if ($customers_rs->num_rows > 0) {
-                            // 1. Get unpaid shipments and their invoice numbers
-                            $unpaid_sql = "SELECT s.customer_id, s.invoice_number, SUM(sc.total_amount) AS unpaid_total
-                                          FROM shipments s
-                                          JOIN shipment_charges sc ON s.shipment_id = sc.shipment_id
-                                          WHERE s.status != 'paid'
-                                          GROUP BY s.customer_id, s.invoice_number";
-                            $unpaid_rs = $conn->query($unpaid_sql);
-
-                            $unpaid_totals = [];        // total unpaid charges per customer
-                            $invoice_map = [];          // map customer_id -> array of invoice_numbers
-
-                            while ($row = $unpaid_rs->fetch_assoc()) {
-                                $cid = $row['customer_id'];
-                                $inv = $row['invoice_number'];
-
-                                $unpaid_totals[$cid] = ($unpaid_totals[$cid] ?? 0) + $row['unpaid_total'];
-                                $invoice_map[$cid][] = $conn->real_escape_string($inv); // store invoice numbers per customer
-                            }
-
-                            // 2. Get partial payments made for those invoices
-                            $partial_payments = [];
-
-                            foreach ($invoice_map as $cid => $invoices) {
-                                if (empty($invoices)) continue;
-
-                                // Turn invoice array into comma-separated quoted list for SQL
-                                $in_clause = "'" . implode("','", $invoices) . "'";
-
-                                $partial_sql = "SELECT ABS(SUM(payment_amount)) AS partial_sum
-                                                FROM payment_receipts
-                                                WHERE invoice_number IN ($in_clause) AND customer_id = '$cid'";
-                                $partial_rs = $conn->query($partial_sql);
-                                if ($partial_rs && $row = $partial_rs->fetch_assoc()) {
-                                    $partial_payments[$cid] = $row['partial_sum'] ?? 0;
-                                }
-                            }
-
-                            // 3. Calculate customer credit
-                            $credit_sql = "SELECT customer_id, 
-                                    SUM(CASE 
-                                          WHEN invoice_number = '0' THEN payment_amount 
-                                          WHEN invoice_number != '0' AND payment_amount < 0 THEN payment_amount 
-                                    END) AS credit
-                            FROM payment_receipts
-                            WHERE invoice_number = '0' OR (invoice_number != '0' AND payment_amount < 0)
-                            GROUP BY customer_id";
-
-                            $credit_rs = $conn->query($credit_sql);
-                            $credits = [];
-                            while ($row = $credit_rs->fetch_assoc()) {
-                                $credits[$row['customer_id']] = $row['credit'];
-                            }
-
                             // Display all customers
                             while ($row = $customers_rs->fetch_assoc()) {
                                 $customer_id = $row['customer_id'];
 
-                                $credit = $credits[$customer_id] ?? 0;
-                                $unpaid_total = $unpaid_totals[$customer_id] ?? 0;
-                                $partial_payment = $partial_payments[$customer_id] ?? 0;
-
-                                // Final due = unpaid - partials - credit
-                                $due_amount = max(0, $unpaid_total - $partial_payment);
+                                // Get customer credit balance using PaymentService
+                                $credit = $paymentService->getCustomerCreditBalance($customer_id);
+                                
+                                // Get customer invoices summary using PaymentService
+                                $invoicesSummary = $paymentService->getCustomerInvoicesSummary($customer_id);
+                                $due_amount = $invoicesSummary['totals']['total_due_amount'];
                     ?>
                                 <tr>
                                     <td><?= htmlspecialchars($row['name']) ?></td>

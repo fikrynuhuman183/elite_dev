@@ -1,5 +1,6 @@
 <?php
-include 'conn.php';
+require_once 'conn.php';
+require_once 'services/PaymentServices.php';
 
 header('Content-Type: application/json');
 
@@ -9,18 +10,35 @@ $input = json_decode(file_get_contents('php://input'), true);
 $customer_id = $input['customer_id'] ?? null;
 $selected_date = $input['soa_date'] ?? null;
 
-if (!$customer_id || !$selected_date) {
-    echo json_encode(['status' => 'error', 'message' => 'Missing customer ID or selected date.']);
+// Input validation
+if (!$customer_id || !is_numeric($customer_id)) {
+    echo json_encode(['status' => 'error', 'message' => 'Invalid or missing customer ID.']);
+    exit;
+}
+
+if (!$selected_date) {
+    echo json_encode(['status' => 'error', 'message' => 'Missing selected date.']);
     exit;
 }
 
 // Validate and sanitize the selected date
-$selected_date = date('Y-m-d', strtotime($selected_date));
+$selected_date_obj = DateTime::createFromFormat('Y-m-d', date('Y-m-d', strtotime($selected_date)));
+if (!$selected_date_obj) {
+    echo json_encode(['status' => 'error', 'message' => 'Invalid date format.']);
+    exit;
+}
+$selected_date = $selected_date_obj->format('Y-m-d');
 
 $response = [];
 $cumulative_balance = 0;
 
 try {
+    // Initialize PaymentService
+    $paymentService = new PaymentService($conn);
+    
+    // Start performance monitoring
+    $start_time = microtime(true);
+    
     // Fetch customer details
     $stmt = $conn->prepare("SELECT name, email, phone, vat_number FROM customers WHERE customer_id = ?");
     $stmt->bind_param("i", $customer_id);
@@ -36,85 +54,130 @@ try {
     $response['customer_info'] = $customer_info;
     $response['selected_date'] = $selected_date;
 
-
-    // Query to get invoices and calculate balances - following customer_payment_history.php pattern
+    // Get customer invoice summaries with payment details up to selected date
+    // Using optimized query that handles payments in a single operation
     $sql = "
-        SELECT s.*, 
-               (SELECT SUM(amount) FROM shipment_charges WHERE shipment_id = s.shipment_id) AS total_charges
+        SELECT 
+            s.shipment_id,
+            s.invoice_number,
+            s.job_date,
+            s.invoice_date,
+            s.payment_date,
+            s.status,
+            ROUND(COALESCE(charges.invoice_total, 0), 3) AS invoice_total,
+            ROUND(COALESCE(payments.total_paid, 0), 3) AS total_paid,
+            GREATEST(0, ROUND(COALESCE(charges.invoice_total, 0), 3) - ROUND(COALESCE(payments.total_paid, 0), 3)) AS balance_due
         FROM shipments s
-        WHERE s.customer_id = ? AND s.payment_date <= ?
+        LEFT JOIN (
+            -- Pre-aggregate charges by invoice with 3 decimal precision
+            SELECT 
+                s2.invoice_number,
+                SUM(sc.total_amount) AS invoice_total
+            FROM shipments s2
+            LEFT JOIN shipment_charges sc ON s2.shipment_id = sc.shipment_id
+            GROUP BY s2.invoice_number
+        ) charges ON s.invoice_number = charges.invoice_number
+        LEFT JOIN (
+            -- Pre-aggregate payments by invoice (excluding credit top-ups) with 3 decimal precision
+            SELECT 
+                invoice_number,
+                SUM(ABS(payment_amount)) AS total_paid
+            FROM payment_receipts
+            WHERE invoice_number != '0'
+            AND payment_date <= ?
+            GROUP BY invoice_number
+        ) payments ON s.invoice_number = payments.invoice_number
+        WHERE s.customer_id = ? 
+        AND s.payment_date <= ?
+        AND s.status != 'paid'
+        HAVING balance_due > 0
         ORDER BY s.invoice_date ASC
     ";
 
     $stmt = $conn->prepare($sql);
-    $stmt->bind_param("is", $customer_id, $selected_date);
+    $stmt->bind_param("sis", $selected_date, $customer_id, $selected_date);
     $stmt->execute();
     $result = $stmt->get_result();
 
     $invoices = [];
     while ($row = $result->fetch_assoc()) {
-        $invoice_number = $row['invoice_number'];
-        $total_charges = (float)$row['total_charges']; // Changed from total_amount to total_charges
-        $status = $row['status'];
+        $balance = (float)$row['balance_due'];
+        
+        // Calculate cumulative balance
+        $cumulative_balance += $balance;
 
-        // Calculate total payments for this invoice - following customer_payment_history.php pattern
-        $payment_sql = "
-            SELECT COALESCE(SUM(ABS(payment_amount)), 0) AS total_paid
-            FROM payment_receipts
-            WHERE invoice_number = ?
-        ";
-        $payment_stmt = $conn->prepare($payment_sql);
-        $payment_stmt->bind_param("s", $invoice_number);
-        $payment_stmt->execute();
-        $payment_result = $payment_stmt->get_result();
-        $payment_row = $payment_result->fetch_assoc();
-        $total_paid = (float)($payment_row['total_paid'] ?? 0);
-        $payment_stmt->close();
-
-        $balance = $total_charges - $total_paid; // Using total_charges
-
-        // Only include invoices with a balance greater than 0 (following customer_payment_history.php logic)
-        if ($status !== 'paid' && $balance > 0) {
-             // Calculate cumulative balance
-            $cumulative_balance += $balance;
-
-            // Calculate due days
-            $due_date = new DateTime($row['payment_date']); // payment_date is the due date
-            $current_date = new DateTime($selected_date);
-            $interval = $current_date->diff($due_date);
-            $due_days = $interval->days;
-            if ($current_date < $due_date && $balance > 0) {
-                $due_days = -$due_days; // Negative if not yet due
-            } else if ($current_date >= $due_date && $balance > 0) {
-                 $due_days = $interval->days; // Positive if overdue
-            } else {
-                 $due_days = 0; // Not due if balance is zero
-            }
-
-            $invoices[] = [
-                'invoice_number' => $row['invoice_number'],
-                'job_date' => $row['job_date'],
-                'invoice_date' => $row['invoice_date'],
-                'due_date' => $row['payment_date'], // payment_date is the due date
-                'currency' => 'AED', // Default currency since no currency_name column exists
-                'total_amount' => number_format($total_charges, 2),
-                'balance' => number_format($balance, 2),
-                'cumulative_balance' => number_format($cumulative_balance, 2),
-                'imp_exp' => $row['imp_exp'] ?? 'N/A',
-                'due_days' => $due_days
-            ];
+        // Calculate due days
+        $due_date = new DateTime($row['payment_date']); // payment_date is the due date
+        $current_date = new DateTime($selected_date);
+        $interval = $current_date->diff($due_date);
+        $due_days = $interval->days;
+        
+        if ($current_date < $due_date) {
+            $due_days = -$due_days; // Negative if not yet due
+        } elseif ($current_date >= $due_date) {
+            $due_days = $interval->days; // Positive if overdue
+        } else {
+            $due_days = 0; // Not due if balance is zero
         }
+
+        $invoices[] = [
+            'invoice_number' => $row['invoice_number'],
+            'job_date' => $row['job_date'],
+            'invoice_date' => $row['invoice_date'],
+            'due_date' => $row['payment_date'], // payment_date is the due date
+            'currency' => 'AED', // Default currency since no currency_name column exists
+            'total_amount' => number_format((float)$row['invoice_total'], 2),
+            'total_paid' => number_format((float)$row['total_paid'], 2),
+            'balance' => number_format($balance, 2),
+            'cumulative_balance' => number_format($cumulative_balance, 2),
+            'due_days' => $due_days
+        ];
     }
 
     $stmt->close();
 
     $response['data'] = $invoices;
     $response['total_amount_due'] = number_format($cumulative_balance, 2);
+    
+    // Add additional customer financial summary using PaymentService
+    $response['customer_credit_balance'] = number_format($paymentService->getCustomerCreditBalance($customer_id), 2);
+    
+    // Get customer invoice summary for additional insights
+    $customer_summary = $paymentService->getCustomerInvoicesSummary($customer_id);
+    if ($customer_summary) {
+        $response['customer_summary'] = [
+            'total_invoices' => $customer_summary['total_invoices'] ?? 0,
+            'total_invoice_amount' => number_format((float)($customer_summary['total_invoice_amount'] ?? 0), 2),
+            'total_paid_amount' => number_format((float)($customer_summary['total_paid_amount'] ?? 0), 2),
+            'total_outstanding' => number_format((float)($customer_summary['total_outstanding'] ?? 0), 2),
+            'paid_invoices' => $customer_summary['paid_invoices'] ?? 0,
+            'partial_invoices' => $customer_summary['partial_invoices'] ?? 0,
+            'unpaid_invoices' => $customer_summary['unpaid_invoices'] ?? 0
+        ];
+    }
+    
+    // End performance monitoring
+    $end_time = microtime(true);
+    $response['performance'] = [
+        'execution_time_ms' => round(($end_time - $start_time) * 1000, 2),
+        'invoice_count' => count($invoices),
+        'query_optimized' => true
+    ];
+    
     $response['status'] = 'success';
 
 } catch (Exception $e) {
     $response['message'] = $e->getMessage();
     $response['status'] = 'error';
+    
+    // Add debug information for development
+    if (isset($_GET['debug']) && $_GET['debug'] === '1') {
+        $response['debug'] = [
+            'file' => __FILE__,
+            'line' => $e->getLine(),
+            'trace' => $e->getTraceAsString()
+        ];
+    }
 }
 
 $conn->close();
