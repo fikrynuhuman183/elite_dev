@@ -2,93 +2,67 @@
 include './layouts/header.php';
 include './layouts/sidebar.php';
 
+// Include PaymentService class
+require_once './backend/services/PaymentServices.php';
+
+// Enable verbose error reporting for debugging
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
+
 // Get customer ID from query parameters
-$customer_id = $_GET['customer_id'] ?? null;
+$customer_id = isset($_GET['customer_id']) ? (int) $_GET['customer_id'] : null;
 
 if (!$customer_id) {
     echo "<div class='alert alert-danger'>Invalid Customer ID</div>";
     exit;
 }
 
-// Fetch invoices related to the customer
-$invoices_sql = "
-    SELECT s.*, 
-           (SELECT SUM(amount) FROM shipment_charges WHERE shipment_id = s.shipment_id) AS total_charges
-    FROM shipments s
-    WHERE s.customer_id = ?
-    ORDER BY s.invoice_date DESC";
-$stmt = $conn->prepare($invoices_sql);
-$stmt->bind_param("s", $customer_id);
-$stmt->execute();
-$invoices_result = $stmt->get_result();
+// Initialize PaymentService
+$paymentService = new PaymentService($conn);
 
-// Separate invoices into categories
-$completely_paid = [];
-$partially_paid = [];
-$due_invoices = [];
+// Fetch customer details
+$customer_data = $paymentService->getCustomerDetails($customer_id);
 
-while ($invoice = $invoices_result->fetch_assoc()) {
-    $total_charges = $invoice['total_charges'];
-    $status = $invoice['status'];
-
-    if ($status === 'paid') {
-        $completely_paid[] = $invoice;
-    } else {
-        // Check payment records for partially paid invoices
-        $payments_sql = "
-            SELECT COALESCE(SUM(ABS(payment_amount)), 0) AS total_paid
-            FROM payment_receipts
-            WHERE invoice_number = ?";
-        $payments_stmt = $conn->prepare($payments_sql);
-        $payments_stmt->bind_param("s", $invoice['invoice_number']);
-        $payments_stmt->execute();
-        $payments_result = $payments_stmt->get_result();
-        $payment_data = $payments_result->fetch_assoc();
-        $total_paid = $payment_data['total_paid'];
-
-        if ($total_paid > 0) {
-            // Partially paid
-            $invoice['total_paid'] = $total_paid;
-            $invoice['due_amount'] = $total_charges - $total_paid;
-            $partially_paid[] = $invoice;
-        } else {
-            // Due invoices
-            $due_invoices[] = $invoice;
-        }
-    }
+if (!$customer_data) {
+    echo "<div class='alert alert-danger'>Customer not found</div>";
+    exit;
 }
 
-// Fetch credit top-ups and deductions
-$credits_sql = "
-    SELECT 
-        ABS(payment_amount) AS amount, 
-        payment_date, 
-        note, 
-        CASE 
-            WHEN invoice_number = '0' THEN 'Credit Top-up'
-            ELSE 'Credit Deduction'
-        END AS type
-    FROM payment_receipts
-    WHERE customer_id = ? AND (invoice_number = '0' OR (invoice_number != '0' AND payment_amount < 0))
-    ORDER BY payment_date DESC";
-$stmt = $conn->prepare($credits_sql);
-$stmt->bind_param("s", $customer_id);
-$stmt->execute();
-$credits_result = $stmt->get_result();
+$customer_name = $customer_data['name'] ?? 'Unknown Customer';
 
-// Calculate remaining credit
-$total_credit_topups = 0;
-$total_credit_deductions = 0;
+// Fetch invoice summaries via PaymentService
+$invoice_summary = $paymentService->getCustomerInvoicesSummary($customer_id);
 
-while ($credit = $credits_result->fetch_assoc()) {
-    if ($credit['type'] === 'Credit Top-up') {
-        $total_credit_topups += $credit['amount'];
-    } else {
-        $total_credit_deductions += $credit['amount'];
-    }
-}
+$completely_paid = $invoice_summary['invoices']['paid'] ?? [];
+$partially_paid = $invoice_summary['invoices']['partial'] ?? [];
+$due_invoices = $invoice_summary['invoices']['unpaid'] ?? [];
 
-$total_credit = $total_credit_topups - $total_credit_deductions;
+$totals = $invoice_summary['totals'] ?? [];
+$total_jobs = $totals['total_jobs'] ?? 0;
+$closed_jobs = $totals['closed_jobs'] ?? 0;
+$due_jobs = $totals['due_jobs'] ?? (count($partially_paid) + count($due_invoices));
+$total_paid_amount = $totals['total_paid_amount'] ?? 0;
+$total_due_amount = $totals['total_due_amount'] ?? 0;
+
+// Get credit balance using PaymentService
+$customer_credit_balance = $paymentService->getCustomerCreditBalance($customer_id);
+
+// Fetch credit summary via PaymentService
+$credit_summary = $paymentService->getCustomerCreditSummary($customer_id);
+$credit_transactions = $credit_summary['transactions'] ?? [];
+$total_credit_topups = $credit_summary['topups'] ?? 0;
+$total_credit_deductions = $credit_summary['deductions'] ?? 0;
+$total_credit = $credit_summary['remaining_credit'] ?? 0;
+
+// Output debug information to browser console
+echo "<script>console.log('CustomerPaymentHistory Debug', " .
+    json_encode([
+        'customer_id' => $customer_id,
+        'customer_name' => $customer_name,
+        'invoice_summary' => $invoice_summary,
+        'credit_summary' => $credit_summary
+    ]) .
+");</script>";
 ?>
 
 <div class="content-wrapper">
@@ -105,6 +79,83 @@ $total_credit = $total_credit_topups - $total_credit_deductions;
     </section>
 
     <section class="content">
+        <!-- Customer Summary Card -->
+        <div class="box box-primary">
+            <div class="box-header with-border">
+                <h3 class="box-title">
+                    <i class="fa fa-user"></i> Customer Summary - 
+                    <span style="color: #3c8dbc; font-weight: bold; background: #f0f8ff; padding: 5px 15px; border-radius: 4px; margin-left: 10px;">
+                        <?= htmlspecialchars($customer_name) ?>
+                    </span>
+                </h3>
+            </div>
+            <div class="box-body">
+                <div class="row">
+                    <div class="col-md-4 col-sm-6">
+                        <div class="info-box bg-blue">
+                            <span class="info-box-icon"><i class="fa fa-file-text"></i></span>
+                            <div class="info-box-content">
+                                <span class="info-box-text">Total Jobs</span>
+                                <span class="info-box-number"><?= $total_jobs ?></span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="col-md-4 col-sm-6">
+                        <div class="info-box bg-green">
+                            <span class="info-box-icon"><i class="fa fa-check-circle"></i></span>
+                            <div class="info-box-content">
+                                <span class="info-box-text">Closed Jobs (Paid)</span>
+                                <span class="info-box-number"><?= $closed_jobs ?></span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="col-md-4 col-sm-6">
+                        <div class="info-box bg-yellow">
+                            <span class="info-box-icon"><i class="fa fa-money"></i></span>
+                            <div class="info-box-content">
+                                <span class="info-box-text">Total Paid Amount</span>
+                                <span class="info-box-number"><?= number_format($total_paid_amount, 2) ?> AED</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="row">
+                    <div class="col-md-4 col-sm-6">
+                        <div class="info-box bg-orange">
+                            <span class="info-box-icon"><i class="fa fa-clock-o"></i></span>
+                            <div class="info-box-content">
+                                <span class="info-box-text">Due Jobs</span>
+                                <span class="info-box-number"><?= $due_jobs ?></span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="col-md-4 col-sm-6">
+                        <div class="info-box bg-red">
+                            <span class="info-box-icon"><i class="fa fa-exclamation-circle"></i></span>
+                            <div class="info-box-content">
+                                <span class="info-box-text">Total Due Amount</span>
+                                <span class="info-box-number"><?= number_format($total_due_amount, 2) ?> AED</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="col-md-4 col-sm-6">
+                        <div class="info-box <?= $customer_credit_balance >= 0 ? 'bg-purple' : 'bg-maroon' ?>">
+                            <span class="info-box-icon"><i class="fa fa-credit-card"></i></span>
+                            <div class="info-box-content">
+                                <span class="info-box-text">Credit Balance</span>
+                                <span class="info-box-number"><?= number_format($customer_credit_balance, 2) ?> AED</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <div class="nav-tabs-custom">
             <ul class="nav nav-tabs">
                 <li class="active"><a href="#invoices" data-toggle="tab">Invoices</a></li>
@@ -113,28 +164,6 @@ $total_credit = $total_credit_topups - $total_credit_deductions;
             <div class="tab-content">
                 <!-- Invoices Tab -->
                 <div class="tab-pane active" id="invoices">
-                    <h3>Completely Paid Invoices</h3>
-                    <table class="table table-bordered table-striped">
-                        <thead>
-                            <tr>
-                                <th>Invoice #</th>
-                                <th>Total Charges</th>
-                                <th>Date</th>
-                                <th>Status</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <?php foreach ($completely_paid as $invoice): ?>
-                                <tr>
-                                    <td><?= htmlspecialchars($invoice['invoice_number']) ?></td>
-                                    <td><?= number_format($invoice['total_charges'], 2) ?></td>
-                                    <td><?= htmlspecialchars($invoice['invoice_date']) ?></td>
-                                    <td><span class="label label-success">Paid</span></td>
-                                </tr>
-                            <?php endforeach; ?>
-                        </tbody>
-                    </table>
-
                     <h3>Partially Paid Invoices</h3>
                     <table class="table table-bordered table-striped">
                         <thead>
@@ -148,16 +177,20 @@ $total_credit = $total_credit_topups - $total_credit_deductions;
                             </tr>
                         </thead>
                         <tbody>
-                            <?php foreach ($partially_paid as $invoice): ?>
-                                <tr>
-                                    <td><?= htmlspecialchars($invoice['invoice_number']) ?></td>
-                                    <td><?= number_format($invoice['total_charges'], 2) ?></td>
-                                    <td><?= number_format($invoice['total_paid'], 2) ?></td>
-                                    <td><?= number_format($invoice['due_amount'], 2) ?></td>
-                                    <td><?= htmlspecialchars($invoice['invoice_date']) ?></td>
-                                    <td><span class="label label-warning">Partially Paid</span></td>
-                                </tr>
-                            <?php endforeach; ?>
+                            <?php if (count($partially_paid) > 0): ?>
+                                <?php foreach ($partially_paid as $invoice): ?>
+                                    <tr>
+                                        <td><?= htmlspecialchars($invoice['invoice_number']) ?></td>
+                                        <td><?= number_format($invoice['total_charges'], 2) ?></td>
+                                        <td><?= number_format($invoice['total_paid'], 2) ?></td>
+                                        <td><?= number_format($invoice['due_amount'], 2) ?></td>
+                                        <td><?= htmlspecialchars($invoice['invoice_date']) ?></td>
+                                        <td><span class="label label-warning">Partially Paid</span></td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            <?php else: ?>
+                                <tr><td colspan="6" class="text-center">No partially paid invoices</td></tr>
+                            <?php endif; ?>
                         </tbody>
                     </table>
 
@@ -172,14 +205,44 @@ $total_credit = $total_credit_topups - $total_credit_deductions;
                             </tr>
                         </thead>
                         <tbody>
-                            <?php foreach ($due_invoices as $invoice): ?>
-                                <tr>
-                                    <td><?= htmlspecialchars($invoice['invoice_number']) ?></td>
-                                    <td><?= number_format($invoice['total_charges'], 2) ?></td>
-                                    <td><?= htmlspecialchars($invoice['invoice_date']) ?></td>
-                                    <td><span class="label label-danger">Due</span></td>
-                                </tr>
-                            <?php endforeach; ?>
+                            <?php if (count($due_invoices) > 0): ?>
+                                <?php foreach ($due_invoices as $invoice): ?>
+                                    <tr>
+                                        <td><?= htmlspecialchars($invoice['invoice_number']) ?></td>
+                                        <td><?= number_format($invoice['total_charges'], 2) ?></td>
+                                        <td><?= htmlspecialchars($invoice['invoice_date']) ?></td>
+                                        <td><span class="label label-danger">Due</span></td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            <?php else: ?>
+                                <tr><td colspan="4" class="text-center">No due invoices</td></tr>
+                            <?php endif; ?>
+                        </tbody>
+                    </table>
+
+                    <h3>Completely Paid Invoices</h3>
+                    <table class="table table-bordered table-striped">
+                        <thead>
+                            <tr>
+                                <th>Invoice #</th>
+                                <th>Total Charges</th>
+                                <th>Date</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php if (count($completely_paid) > 0): ?>
+                                <?php foreach ($completely_paid as $invoice): ?>
+                                    <tr>
+                                        <td><?= htmlspecialchars($invoice['invoice_number']) ?></td>
+                                        <td><?= number_format($invoice['total_charges'], 2) ?></td>
+                                        <td><?= htmlspecialchars($invoice['invoice_date']) ?></td>
+                                        <td><span class="label label-success">Paid</span></td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            <?php else: ?>
+                                <tr><td colspan="4" class="text-center">No fully paid invoices</td></tr>
+                            <?php endif; ?>
                         </tbody>
                     </table>
                 </div>
@@ -197,21 +260,24 @@ $total_credit = $total_credit_topups - $total_credit_deductions;
                             </tr>
                         </thead>
                         <tbody>
-                            <?php
-                            $credits_result->data_seek(0); // Reset result pointer
-                            while ($credit = $credits_result->fetch_assoc()):
-                                $type = $credit['type'];
-                                $amount = number_format(abs($credit['amount']), 2);
-                                $date = htmlspecialchars($credit['payment_date']);
-                                $note = htmlspecialchars($credit['note'] ?? '');
-                            ?>
-                                <tr>
-                                    <td><?= $amount ?></td>
-                                    <td><?= $date ?></td>
-                                    <td><?= $type ?></td>
-                                    <td><?= $note ?></td>
-                                </tr>
-                            <?php endwhile; ?>
+                            <?php if (count($credit_transactions) > 0): ?>
+                                <?php foreach ($credit_transactions as $credit): ?>
+                                    <?php
+                                        $amount = number_format(abs($credit['amount']), 2);
+                                        $date = htmlspecialchars($credit['payment_date']);
+                                        $type = htmlspecialchars($credit['type_label'] ?? $credit['type']);
+                                        $note = htmlspecialchars($credit['note'] ?? '');
+                                    ?>
+                                    <tr>
+                                        <td><?= $amount ?></td>
+                                        <td><?= $date ?></td>
+                                        <td><?= $type ?></td>
+                                        <td><?= $note ?></td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            <?php else: ?>
+                                <tr><td colspan="4" class="text-center">No credit transactions found</td></tr>
+                            <?php endif; ?>
                         </tbody>
                     </table>
 

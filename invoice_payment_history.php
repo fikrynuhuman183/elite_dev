@@ -105,17 +105,14 @@ $totalProfit = 0;
                                               <?php if ($u_id == 1): ?>
                                                   <button class="btn btn-danger" onclick="deleteReceipt('<?= $payment['id'] ?>')">Delete</button>
                                               <?php endif; ?>
+                                              <button class="btn btn-info" onclick="viewInvoiceById('<?= $payment['receipt_no'] ?>')">View Invoice</button>
                                               <button class="btn btn-secondary" onclick="printReceiptById('<?= $payment['receipt_no'] ?>')">Print</button>
 
                                           </td>
                                       </tr>
                           <?php
                                   }
-                              } else {
-                                  echo "<tr><td colspan='5'>No Payment History Found</td></tr>";
                               }
-                          } else {
-                              echo "<tr><td colspan='5'>Invalid Invoice ID</td></tr>";
                           }
                           ?>
                         </tbody>
@@ -171,14 +168,8 @@ $totalProfit = 0;
                                         </tr>
                                         <?php
                                     }
-                                } else {
-                                    echo "<tr><td colspan='3'>No Credit Notes Found</td></tr>";
                                 }
-                            } else {
-                                echo "<tr><td colspan='3'>Shipment not found for Invoice ID</td></tr>";
                             }
-                        } else {
-                            echo "<tr><td colspan='3'>Invalid Invoice ID</td></tr>";
                         }
                         ?>
                     </tbody>
@@ -193,6 +184,29 @@ $totalProfit = 0;
           </div><!-- /.row -->
         </section><!-- /.content -->
       </div><!-- /.content-wrapper -->
+      
+      <!-- Modal for viewing invoice -->
+      <div class="modal fade" id="viewInvoiceModal" tabindex="-1" role="dialog" aria-labelledby="viewInvoiceModalLabel">
+        <div class="modal-dialog modal-lg" role="document" style="width: 95%; max-width: 1400px;">
+          <div class="modal-content">
+            <div class="modal-header">
+              <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                <span aria-hidden="true">&times;</span>
+              </button>
+              <h4 class="modal-title" id="viewInvoiceModalLabel">Invoice Preview</h4>
+            </div>
+            <div class="modal-body" style="padding: 0; background:#fff;">
+              <iframe id="viewInvoiceFrame" style="width: 100%; height: 75vh; border: none;">
+              </iframe>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-default" data-dismiss="modal">Close</button>
+              <button type="button" class="btn btn-primary" onclick="printCurrentInvoice()">Print</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      
       <iframe id="printFrame" style="display:none;"></iframe>
 
       <footer class="main-footer">
@@ -217,6 +231,61 @@ $totalProfit = 0;
     <script src="./dist/js/demo.js" type="text/javascript"></script>
     <!-- page script -->
     <script type="text/javascript">
+      let currentInvoiceData = null;
+      
+      function viewInvoiceById(receiptId) {
+        const viewFrame = document.getElementById('viewInvoiceFrame');
+        
+        // Show modal
+        $('#viewInvoiceModal').modal('show');
+        
+        // Fetch invoice data
+        fetch('./backend/print_receipt.php?id=' + encodeURIComponent(receiptId))
+          .then(res => res.json())
+          .then(data => {
+            currentInvoiceData = data;
+            
+            // Remove background images from the HTML content
+            let cleanHtml = data.html_content;
+            cleanHtml = cleanHtml.replace(/background-image\s*:\s*url\([^)]*\)\s*;?/gi, '');
+            cleanHtml = cleanHtml.replace(/background\s*:\s*url\([^)]*\)[^;]*;?/gi, '');
+            
+            // Write content to iframe
+            viewFrame.contentWindow.document.open();
+            viewFrame.contentWindow.document.write(cleanHtml);
+            viewFrame.contentWindow.document.close();
+          })
+          .catch(err => {
+            alert('Failed to load invoice: ' + err.message);
+            $('#viewInvoiceModal').modal('hide');
+          });
+      }
+      
+      function printCurrentInvoice() {
+        if (!currentInvoiceData) {
+          alert('No invoice data available to print');
+          return;
+        }
+        
+        const printFrame = document.getElementById('printFrame');
+        const originalTitle = document.title;
+        
+        document.title = currentInvoiceData.receipt_id;
+        
+        var img = new Image();
+        img.src = "reciept.jpg";
+        
+        img.onload = function () {
+          printFrame.src = 'about:blank';
+          printFrame.contentWindow.document.open();
+          printFrame.contentWindow.document.write(currentInvoiceData.html_content);
+          printFrame.contentWindow.document.close();
+          printFrame.contentWindow.focus();
+          printFrame.contentWindow.print();
+          document.title = originalTitle;
+        };
+      }
+      
       function printReceiptById(receiptId) {
         fetch('./backend/print_receipt.php?id=' + encodeURIComponent(receiptId))
           .then(res => res.json()) // Parse the response as JSON
@@ -287,8 +356,15 @@ $totalProfit = 0;
         });
     }
       $(function () {
-        $("#example1").dataTable({
-          
+        $("#example1").DataTable({
+          "columnDefs": [
+            { "orderable": false, "targets": 4 } // Disable sorting on Actions column
+          ],
+          "order": [[1, "desc"]], // Sort by Date (column index 1) descending by default
+          "language": {
+            "emptyTable": "No Payment History Found",
+            "zeroRecords": "No matching records found"
+          }
         });
         $('#example2').dataTable({
           "pageLength": 50,
@@ -301,8 +377,16 @@ $totalProfit = 0;
         });
       });
       $(function () {
-        $("#creditNoteTable").dataTable({
-          "pageLength": 50
+        $("#creditNoteTable").DataTable({
+          "pageLength": 50,
+          "columnDefs": [
+            { "orderable": false, "targets": 3 } // Disable sorting on Actions column
+          ],
+          "order": [[0, "desc"]], // Sort by Credit Note Number descending by default
+          "language": {
+            "emptyTable": "No Credit Notes Found",
+            "zeroRecords": "No matching records found"
+          }
         });
         $('#example2').dataTable({
           "pageLength": 50,

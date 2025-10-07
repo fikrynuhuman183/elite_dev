@@ -1,7 +1,357 @@
-<?php include 'layouts/header.php'; ?>
+<?php 
+session_start();
+include 'layouts/header.php'; ?>
 <?php include 'layouts/sidebar.php';
 
 ?>
+
+<!-- Birthday Wish Popup -->
+<div id="birthdayModal" class="birthday-modal">
+  <div class="birthday-modal-content">
+    <span class="birthday-close">&times;</span>
+    <div class="birthday-container">
+      <div class="birthday-header">
+        <h1 class="birthday-title">🎉 Happy Birthday! 🎉</h1>
+        <div class="birthday-balloons">
+          <div class="balloon balloon-1">🎈</div>
+          <div class="balloon balloon-2">🎈</div>
+          <div class="balloon balloon-3">🎈</div>
+        </div>
+      </div>
+      <div class="birthday-content">
+        <h2 class="birthday-name">Mr Abdul Hanan!</h2>
+        <p class="birthday-message">
+          May Allah bless you with abundant wealth, endless happiness, and great success in all your endeavors.</p><p> 🌟
+May this year be filled with joy, prosperity, and countless blessings. 💫</p>
+
+<p>BarakAllahu laka wa ahsanallahu ilayk 🎂
+        </p>
+        
+        <div class="birthday-cake">🎂</div>
+        <div class="birthday-confetti">
+          <div class="confetti-piece">🎊</div>
+          <div class="confetti-piece">✨</div>
+          <div class="confetti-piece">🎊</div>
+          <div class="confetti-piece">✨</div>
+          <div class="confetti-piece">🎊</div>
+        </div>
+      </div>
+      <p>- Team EliteLink -</p>
+      <button class="birthday-btn" onclick="closeBirthdayModal()">Thank You! 🎈</button>
+    </div>
+  </div>
+</div>
+
+<style>
+/* Birthday Modal Styles */
+.birthday-modal {
+  display: none;
+  position: fixed;
+  z-index: 9999;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.8);
+  animation: fadeIn 0.5s ease-in;
+}
+
+.birthday-modal-content {
+  position: relative;
+  margin: 5% auto;
+  padding: 0;
+  width: 90%;
+  max-width: 500px;
+  background: linear-gradient(135deg, #ff6b6b, #feca57, #48dbfb, #ff9ff3);
+  border-radius: 20px;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+  animation: bounceIn 0.8s ease-out;
+}
+
+.birthday-container {
+  padding: 30px;
+  text-align: center;
+  color: white;
+  position: relative;
+  overflow: hidden;
+}
+
+.birthday-header {
+  margin-bottom: 20px;
+}
+
+.birthday-title {
+  font-size: 2.5em;
+  margin: 0 0 15px 0;
+  text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+  animation: pulse 2s infinite;
+}
+
+.birthday-balloons {
+  margin: 15px 0;
+}
+
+.balloon {
+  display: inline-block;
+  font-size: 2em;
+  margin: 0 10px;
+  animation: float 3s ease-in-out infinite;
+}
+
+.balloon-1 {
+  animation-delay: 0s;
+  color: #ff6b6b;
+}
+
+.balloon-2 {
+  animation-delay: 0.5s;
+  color: #feca57;
+}
+
+.balloon-3 {
+  animation-delay: 1s;
+  color: #48dbfb;
+}
+
+.birthday-name {
+  font-size: 2.2em;
+  margin: 20px 0;
+  color: #fff !important;
+  text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+  font-weight: bold;
+  /* Removed gradient effect to keep text white */
+}
+
+.birthday-message {
+  font-size: 1.1em;
+  line-height: 1.6;
+  margin: 20px 0;
+  text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+.birthday-cake {
+  font-size: 4em;
+  margin: 20px 0;
+  animation: bounce 2s infinite;
+}
+
+.birthday-confetti {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.confetti-piece {
+  position: absolute;
+  font-size: 1.5em;
+  animation: confetti 3s linear infinite;
+}
+
+.confetti-piece:nth-child(1) {
+  left: 10%;
+  animation-delay: 0s;
+}
+
+.confetti-piece:nth-child(2) {
+  left: 30%;
+  animation-delay: 0.5s;
+}
+
+.confetti-piece:nth-child(3) {
+  left: 50%;
+  animation-delay: 1s;
+}
+
+.confetti-piece:nth-child(4) {
+  left: 70%;
+  animation-delay: 1.5s;
+}
+
+.confetti-piece:nth-child(5) {
+  left: 90%;
+  animation-delay: 2s;
+}
+
+.birthday-btn {
+  background: linear-gradient(45deg, #ff6b6b, #feca57);
+  border: none;
+  padding: 15px 30px;
+  font-size: 1.2em;
+  color: white;
+  border-radius: 50px;
+  cursor: pointer;
+  box-shadow: 0 8px 15px rgba(0, 0, 0, 0.3);
+  transition: all 0.3s ease;
+  font-weight: bold;
+  text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+.birthday-btn:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 12px 20px rgba(0, 0, 0, 0.4);
+}
+
+.birthday-close {
+  position: absolute;
+  top: 15px;
+  right: 20px;
+  color: white;
+  font-size: 30px;
+  font-weight: bold;
+  cursor: pointer;
+  z-index: 10;
+  text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+.birthday-close:hover {
+  transform: scale(1.2);
+  transition: transform 0.2s ease;
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes bounceIn {
+  0% {
+    transform: scale(0.3) rotate(-10deg);
+    opacity: 0;
+  }
+  50% {
+    transform: scale(1.05) rotate(5deg);
+  }
+  70% {
+    transform: scale(0.9) rotate(-2deg);
+  }
+  100% {
+    transform: scale(1) rotate(0deg);
+    opacity: 1;
+  }
+}
+
+@keyframes pulse {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.1);
+  }
+}
+
+@keyframes float {
+  0%, 100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-20px);
+  }
+}
+
+@keyframes bounce {
+  0%, 20%, 53%, 80%, 100% {
+    transform: translateY(0);
+  }
+  40%, 43% {
+    transform: translateY(-15px);
+  }
+  70% {
+    transform: translateY(-7px);
+  }
+  90% {
+    transform: translateY(-3px);
+  }
+}
+
+@keyframes confetti {
+  0% {
+    transform: translateY(-100px) rotate(0deg);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(100vh) rotate(720deg);
+    opacity: 0;
+  }
+}
+
+/* Responsive Design */
+@media (max-width: 600px) {
+  .birthday-modal-content {
+    width: 95%;
+    margin: 10% auto;
+  }
+  
+  .birthday-container {
+    padding: 20px;
+  }
+  
+  .birthday-title {
+    font-size: 2em;
+  }
+  
+  .birthday-name {
+    font-size: 1.8em;
+  }
+  
+  .birthday-message {
+    font-size: 1em;
+  }
+  
+  .birthday-cake {
+    font-size: 3em;
+  }
+}
+</style>
+
+<script>
+// Birthday Modal JavaScript
+function showBirthdayModal() {
+  document.getElementById('birthdayModal').style.display = 'block';
+  
+  // Play a birthday sound if available (optional)
+  // You can add an audio element and play it here
+  
+  // Auto close after 30 seconds if user doesn't interact
+  setTimeout(function() {
+    if (document.getElementById('birthdayModal').style.display === 'block') {
+      closeBirthdayModal();
+    }
+  }, 30000);
+}
+
+function closeBirthdayModal() {
+  document.getElementById('birthdayModal').style.display = 'none';
+}
+
+// Show modal when page loads
+document.addEventListener('DOMContentLoaded', function() {
+  // Show birthday popup after a short delay
+  setTimeout(function() {
+    showBirthdayModal();
+  }, 1000); // Show after 1 second delay
+});
+
+// Close modal when clicking outside of it
+document.getElementById('birthdayModal').addEventListener('click', function(event) {
+  if (event.target === this) {
+    closeBirthdayModal();
+  }
+});
+
+// Close modal when clicking the X button
+document.querySelector('.birthday-close').addEventListener('click', function() {
+  closeBirthdayModal();
+});
+
+// Prevent modal from closing when clicking inside the content
+document.querySelector('.birthday-modal-content').addEventListener('click', function(event) {
+  event.stopPropagation();
+});
+</script>
 
       <!-- Right side column. Contains the navbar and content of the page -->
       <div class="content-wrapper">
