@@ -1,5 +1,11 @@
 <?php include './layouts/header.php'; ?>
 <?php include './layouts/sidebar.php'; ?>
+<?php require_once './backend/services/PaymentServices.php'; ?>
+
+<?php
+// Initialize PaymentService
+$paymentService = new PaymentService($conn);
+?>
 
 <style media="screen">
 /* print.css */
@@ -56,42 +62,6 @@
   font-size: 13px;
   color: #000;
 }
-
-.full-payment-card {
-  background-color: #e8f5e8;
-  border: 1px solid #28a745;
-  border-radius: 8px;
-  padding: 10px 14px;
-  color: #000;
-  box-shadow: 0 2px 8px rgba(40, 167, 69, 0.1);
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
-}
-
-.full-payment-card:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(40, 167, 69, 0.15);
-}
-
-.full-payment-toggle {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-weight: 600;
-  color: #155724;
-  margin: 0;
-  font-size: 14px;
-}
-
-.full-payment-toggle input[type="checkbox"] {
-  width: 18px;
-  height: 18px;
-  accent-color: #28a745;
-  cursor: pointer;
-}
-
-.full-payment-toggle span {
-  font-size: 14px;
-}
 </style>
 
 
@@ -118,66 +88,58 @@
                 <div class="col-md-6">
                   <div class="box box-primary">
                     <div class="box-body">
+                      <?php
+                        // Initialize variables
+                        $selected = '';
+                        $shipment_id  = '';
+                        $customer_id = '';
+                        $auto_receipt_number = '';
+                        $customer_name = '';
+                        $customer_credit_balance = 0.00;
+                        
+                        // Check if invoice_id is provided in URL
+                        if (isset($_GET['invoice_id'])) {
+                            $id = $_GET['invoice_id'];
+                            $q = $conn->query("SELECT * FROM shipments WHERE invoice_number = '$id'");
+                            if ($row = $q->fetch_assoc()) {
+                                $selected = $row['invoice_number'];
+                                $shipment_id = $row['shipment_id'];
+                                $customer_id = $row['customer_id'];
+                                
+                                // Generate receipt number automatically when page loads with invoice_id
+                                $auto_receipt_number = $paymentService->generateNextReceiptNumber($selected);
+                                
+                                // Get customer name
+                                $sql = "SELECT name FROM customers WHERE customer_id = '$customer_id'";
+                                $result = $conn->query($sql);
+                                if ($result->num_rows > 0) {
+                                    $customer_row = $result->fetch_assoc();
+                                    $customer_name = $customer_row['name'];
+                                }
+                                
+                                // Get customer credit balance
+                                $customer_credit_balance = $paymentService->getCustomerCreditBalance($customer_id);
+                            }
+                        } else {
+                            // Generate a temporary receipt number if no invoice is selected
+                            $auto_receipt_number = 'RE-' . date('YmdHis');
+                        }
+                      ?>
+                      
                       <div class="form-group">
                         <label for="date">Date:</label>
                         <input type="date" id="date" name="date" required class="form-control">
                       </div>
                       <div class="form-group">
                         <label for="receipt_no">Receipt No:</label>
-                        <input type="text" id="receipt_no" name="receipt_no" required class="form-control">
+                        <input type="text" id="receipt_no" name="receipt_no" required class="form-control" value="<?= $auto_receipt_number ?>">
                       </div>
 
                       <!-- Job selection and customer name -->
                       <div class="form-group">
-                        <?php
-                          $selected = '';
-                          $shipment_id  = '';
-                          $customer_id = '';
-                          if (isset($_GET['invoice_id'])) {
-                              $id = $_GET['invoice_id'];
-                              $q = $conn->query("SELECT * FROM shipments WHERE invoice_number = '$id'");
-                              if ($row = $q->fetch_assoc()) {
-                                  $selected = $row['invoice_number'];
-                                  $shipment_id = $row['shipment_id'];
-                                  $customer_id = $row['customer_id'];
-                              }
-                          }
-
-                          $sqltotal = "SELECT SUM(total_amount) as total FROM shipment_charges WHERE shipment_id = '$shipment_id'";
-                          $rstotal = $conn->query($sqltotal);
-                          $total = 0;
-                          while ($rowtotal = $rstotal->fetch_assoc()) {
-                              $total = round($rowtotal['total'], 3);
-                          }
-
-              $sql = "SELECT name FROM customers WHERE customer_id = '$customer_id'";
-              $result = $conn->query($sql);
-              $customer_name = '';
-              if ($result->num_rows > 0) {
-                while ($row = $result->fetch_assoc()) {
-                  $customer_name = $row['name'];
-                }
-              }
-
-              $customer_credit_balance = 0.00;
-              if (!empty($customer_id) && function_exists('getCustomerCreditBalance')) {
-                $customer_credit_balance = getCustomerCreditBalance($conn, $customer_id);
-              }
-                        ?>
                         <label for="job">Job (Invoice Number):</label>
                         <input list="dropdown-jobs" class="form-control" name="jobs" id="jobs" placeholder="Enter Value" value="<?= $selected ?>" required>
-                        <datalist id="dropdown-jobs">
-                          <?php
-                            $sql = "SELECT invoice_number FROM shipments";
-                            $result = $conn->query($sql);
-                            if ($result->num_rows > 0) {
-                                while ($row = $result->fetch_assoc()) {
-                                    $item_desc = $row['invoice_number'];
-                                    echo "<option value='$item_desc'></option>";
-                                }
-                            }
-                          ?>
-                        </datalist>
+                        
                       </div>
 
                       <div class="form-group">
@@ -200,16 +162,6 @@
                                 }
                             }
                           ?>
-                        </select>
-                      </div>
-
-                      <div class="form-group">
-                        <label for="mode_of_payment">Mode of Payment:</label>
-                        <select id="mode_of_payment" name="mode_of_payment" required class="form-control">
-                          <option value="">Select Payment Mode</option>
-                          <option value="cash">Cash</option>
-                          <option value="check">Check</option>
-                          <option value="bank_transfer">Bank Transfer</option>
                         </select>
                       </div>
 
@@ -240,17 +192,9 @@
                       $paid_amount = 0;
                       $remaining = 0;
 
-                      // Get total charges
-                      $q1 = $conn->query("SELECT SUM(total_amount) as total FROM shipment_charges WHERE shipment_id = '$shipment_id'");
-                      if ($row1 = $q1->fetch_assoc()) {
-                          $total_charges = floatval($row1['total']);
-                      }
-
-                      // Get already paid amount
-                      $q2 = $conn->query("SELECT SUM(ABS(payment_amount)) as paid FROM payment_receipts WHERE invoice_number = '$selected' AND full_payment = 0");
-                      if ($row2 = $q2->fetch_assoc()) {
-                          $paid_amount = floatval($row2['paid']);
-                      }
+                      // Use PaymentService to get total charges and paid amount
+                      $total_charges = $paymentService->getInvoiceTotal($selected);
+                      $paid_amount = $paymentService->getTotalPaidAmount($selected);
 
                       // Calculate remaining
                       $remaining = $total_charges - $paid_amount;
@@ -324,14 +268,6 @@
                               </select>
 
                             </div>
-                            <div class="col-md-3">
-                                <div class="full-payment-card">
-                                    <label class="full-payment-toggle" for="fullPaymentCheckbox">
-                                        <input type="checkbox" id="fullPaymentCheckbox" onchange="handleFullPaymentChange()">
-                                        <span>Full Payment</span>
-                                    </label>
-                                </div>
-                            </div>
                           </div>
 
 
@@ -339,84 +275,88 @@
                         </div>
                         <div class="box-body">
 
+                            <!-- Payment Methods Section -->
                             <div class="row">
-                                <div class="col-md-12">
-                                  <div class="">
-                                    <div id="borderChargesContainer" class="table-responsive">
-                                        <table class="table table-bordered">
-                                            <thead>
-                                            <tr>
-                                                  <th>Description</th>
-                                                  <th>Amount</th>
-                                                  <th>Total</th>
-                                              </tr>
+                              <div class="col-md-12">
+                                <div class="form-group">
+                                  <label style="font-weight: bold; margin-bottom: 15px;">Payment Methods:</label>
+                                  
+                                  <!-- Payment Method Checkboxes -->
+                                  <div class="payment-methods-checkboxes" style="margin-bottom: 20px;">
+                                    <div class="checkbox-group" style="display: flex; gap: 20px; flex-wrap: wrap;">
+                                      <label class="checkbox-label" style="display: flex; align-items: center; cursor: pointer;">
+                                        <input type="checkbox" id="cash_payment" name="payment_methods[]" value="cash" checked 
+                                               onchange="togglePaymentRow('cash')" style="margin-right: 8px; transform: scale(1.2);">
+                                        <span style="font-weight: 500;">Cash</span>
+                                      </label>
+                                      
+                                      <label class="checkbox-label" style="display: flex; align-items: center; cursor: pointer;">
+                                        <input type="checkbox" id="bank_transfer_payment" name="payment_methods[]" value="bank_transfer" 
+                                               onchange="togglePaymentRow('bank_transfer')" style="margin-right: 8px; transform: scale(1.2);">
+                                        <span style="font-weight: 500;">Bank Transfer</span>
+                                      </label>
+                                      
+                                      <label class="checkbox-label" style="display: flex; align-items: center; cursor: pointer;">
+                                        <input type="checkbox" id="cheque_payment" name="payment_methods[]" value="cheque" 
+                                               onchange="togglePaymentRow('cheque')" style="margin-right: 8px; transform: scale(1.2);">
+                                        <span style="font-weight: 500;">Cheque</span>
+                                      </label>
+                                    </div>
+                                  </div>
 
-                                            </thead>
-                                            <tbody>
-                                                <tr class="border-charge-row" data-index="1">
+                                  <!-- Dynamic Payment Rows Container -->
+                                  <div id="payment-rows-container">
+                                    <!-- Cash payment row (default) -->
+                                    <div id="cash-payment-row" class="payment-method-row" style="margin-bottom: 15px; padding: 15px; border: 1px solid #ddd; border-radius: 5px; background-color: #f9f9f9;">
+                                      <h5 style="margin-bottom: 10px; color: #333;">Cash Payment</h5>
+                                      <div style="display: flex; gap: 15px; align-items: center; flex-wrap: wrap;">
+                                        <div style="flex: 1; min-width: 200px;">
+                                          <label for="cash_description">Description:</label>
+                                          <input type="text" id="cash_description" name="cash_description" class="form-control" placeholder="Cash payment description">
+                                        </div>
+                                        <div style="flex: 1; min-width: 150px;">
+                                          <label for="cash_amount">Amount:</label>
+                                          <input type="number" id="cash_amount" name="cash_amount" class="form-control payment-amount" 
+                                                 step="0.01" min="0" placeholder="0.00" onchange="calculateTotalPayment()">
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </div>
 
-                                                  <td><input type="text" class="form-control" id="description" name="description"></td>
-                                                  <!-- <td>
-                                                    <select id="currencyRate1" name="currencyRate1" class="form-control">
-                                                      <?php
-
-                                                      $sql = "SELECT * FROM currencies";
-                                                      $result = $conn->query($sql);
-
-                                                      if ($result->num_rows > 0) {
-                                                          // Output data of each row
-                                                          while ($row = $result->fetch_assoc()) {
-                                                              $id = $row['id'];
-                                                              $currency = $row['currency'];
-                                                              $roe = $row['roe'];
-                                                              echo "<option value='$id'>$currency - $roe</option>";
-                                                          }
-                                                      } else {
-                                                          echo "0 results";
-                                                      }
-                                                      ?>
-                                                    </select>
-                                                  </td> -->
-                                                  <td><input type="text" class="form-control" id="unit_price" name="unit_price"></td>
-
-                                                  <td><input type="text" class="form-control" id="totalAmount" name="totalAmount" disabled></td>
-                                                  
-                                                </tr>
-                                                <!-- Additional rows will be added here -->
-                                            </tbody>
-
-                                        </table>
-
+                                  <!-- Full Payment Button and Summary -->
+                                  <div style="margin-top: 20px; padding: 15px; border: 1px solid #28a745; border-radius: 5px; background-color: #f8fff9;">
+                                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                                      <button type="button" id="full-payment-btn" class="btn btn-success" onclick="setFullPayment()" 
+                                              style="padding: 10px 20px; font-weight: bold;">
+                                        Pay Full Amount
+                                      </button>
+                                      <div style="text-align: right;">
+                                        <div style="margin-bottom: 5px;">
+                                          <strong>Total Payment: $<span id="total-payment-display">0.00</span></strong>
+                                        </div>
+                                        <div style="color: #28a745;">
+                                          <strong>Remaining: $<span id="remaining-amount-display"><?php echo isset($remaining) ? number_format($remaining, 2) : '0.00'; ?></span></strong>
+                                        </div>
+                                      </div>
                                     </div>
                                   </div>
                                 </div>
+                              </div>
                             </div>
                             <hr>
-                            <div class="row">
-                                <div class="col-md-3">
-                                    <label for="total">Total (AED):</label>
-                                    <input type="text" class="form-control" id="total" readonly>
-                                </div>
-                                <div class="col-md-3">
-                                    <label for="total">&nbsp;</label> <br>
-                                    <button type="button" class="btn btn-primary" onclick="calculateTotal()">Calculate Total</button>
-                                </div>
-                                <div class="col-md-6"></div>
-
-                            </div>
-                            <br>
                             <div class="row">
                               <div class="col-md-12">
                                 <div class="form-group">
                                   <label>Note</label>
                                   <textarea id="special_note" class="form-control" rows="3" placeholder="Enter Special note"></textarea>
                                 </div>
-
                               </div>
+                            </div>
+
+                            <div class="row">
                               <div class="col-md-3">
                                   <button type="button" class="btn btn-danger form-control" onclick="collectFormData()">Add Payment & Print Invoice</button>
                               </div>
-
                             </div>
                         </div>
                     </div>
@@ -441,32 +381,44 @@
         document.getElementById('date').value = today;
     });
 
-// Handle Full Payment checkbox functionality
-function handleFullPaymentChange() {
-    const checkbox = document.getElementById('fullPaymentCheckbox');
-    const amountField = document.getElementById('unit_price');
-    const totalAmountField = document.getElementById('totalAmount');
-    const remainingAmount = parseFloat(document.getElementById('amount-remaining').textContent) || 0;
+// Generate receipt number when invoice is selected
+function generateReceiptNumber() {
+    const invoiceNumber = document.getElementById('jobs').value;
     
-    if (checkbox.checked) {
-        // Set the remaining amount and disable the field
-        amountField.value = remainingAmount.toFixed(2);
-        amountField.disabled = true;
-        amountField.style.backgroundColor = '#f0f0f0';
-        
-        // Automatically calculate total
-        calculateTotal();
-    } else {
-        // Enable the field and clear it
-        amountField.disabled = false;
-        amountField.value = '';
-        amountField.style.backgroundColor = '';
-        
-        // Clear both the totalAmount and total fields
-        totalAmountField.value = '';
-        document.getElementById('total').value = '';
+    if (!invoiceNumber || invoiceNumber.trim() === '') {
+        document.getElementById('receipt_no').value = '';
+        return;
     }
+    
+    // Call backend to generate receipt number
+    fetch('./backend/generate_receipt_number.php', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            invoice_number: invoiceNumber
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.status === 'success') {
+            document.getElementById('receipt_no').value = data.receipt_number;
+        } else {
+            console.error('Error generating receipt number:', data.message);
+            // Fallback: use timestamp-based receipt number
+            const timestamp = Date.now();
+            document.getElementById('receipt_no').value = `RE-${timestamp}`;
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        // Fallback: use timestamp-based receipt number
+        const timestamp = Date.now();
+        document.getElementById('receipt_no').value = `RE-${timestamp}`;
+    });
 }
+
 function formatDate(dateString) {
     if(!dateString){
       return '';
@@ -824,6 +776,11 @@ document.addEventListener('DOMContentLoaded', function() {
   const day = String(today.getDate()).padStart(2, '0');
   dateInput.value = `${year}-${month}-${day}`;
 
+  // Generate receipt number for already selected invoice
+  const jobsInput = document.getElementById('jobs');
+  if (jobsInput && jobsInput.value && jobsInput.value.trim() !== '') {
+    generateReceiptNumber();
+  }
 
   shippingModes.forEach(radio => radio.addEventListener('change', generateShipmentId));
   importExport.forEach(radio => radio.addEventListener('change', generateShipmentId));
@@ -839,18 +796,38 @@ function collectFormData() {
     const receipt_no = document.getElementById('receipt_no').value;
     const customer = document.getElementById('customer').value;
     const job = document.getElementById('jobs').value;
-    const mode_of_payment = document.getElementById('mode_of_payment').value;
     const special_note = document.getElementById('special_note').value;
-    const total = document.getElementById('total').value;
+    
+    // Calculate total payment from payment methods instead of charges
+    let totalPaymentAmount = 0;
+    const paymentAmounts = document.querySelectorAll('.payment-amount');
+    paymentAmounts.forEach(input => {
+        totalPaymentAmount += parseFloat(input.value) || 0;
+    });
+    
     const currencySelect = document.getElementById('globalCurrency');
     const selectedOption = currencySelect.options[currencySelect.selectedIndex];
     const currencyText = selectedOption.textContent.trim(); // e.g. "AED  3.685"
 
     const [currencyName, roe] = currencyText.split(/\s+/);
+    
+    // Collect payment methods data
+    const paymentMethods = [];
+    const checkedMethods = document.querySelectorAll('input[name="payment_methods[]"]:checked');
+    
+    checkedMethods.forEach(checkbox => {
+        const method = checkbox.value;
+        const amountInput = document.getElementById(method + '_amount');
+        const descriptionInput = document.getElementById(method + '_description');
+        
+        if (amountInput && amountInput.value && parseFloat(amountInput.value) > 0) {
+            paymentMethods.push(method);
+        }
+    });
+    
     // Collect charges table data
-    const description = document.getElementById('description').value;
+    const description = '';
     // Checkboxes
-    const fullPayment = false;
     const deductCredit = document.getElementById('deductCredit').checked;
 
     // Collect charges table data
@@ -877,16 +854,39 @@ function collectFormData() {
       salesperson: salesperson,
       customer: customer,
       invoice_no: job,
-      mode_of_payment: mode_of_payment,
       special_note: special_note,
-      total: total,
+      total: totalPaymentAmount,
       description: description,      
       currency_name: currencyName,
       currency_roe: roe,
-      full_payment: fullPayment,
       deduct_credit: deductCredit,
-      borderCharges: borderCharges
+      borderCharges: borderCharges,
+      payment_methods: paymentMethods
     };
+    
+    // Add individual payment method amounts and descriptions
+    paymentMethods.forEach(method => {
+        const amountInput = document.getElementById(method + '_amount');
+        const descriptionInput = document.getElementById(method + '_description');
+        
+        if (amountInput) {
+            data[method + '_amount'] = amountInput.value;
+        }
+        if (descriptionInput) {
+            data[method + '_description'] = descriptionInput.value;
+        }
+    });
+    
+    // Validation
+    if (totalPaymentAmount <= 0) {
+        alert('Please enter at least one payment amount greater than 0.');
+        return;
+    }
+    
+    if (paymentMethods.length === 0) {
+        alert('Please select at least one payment method and enter an amount.');
+        return;
+    }
 
     console.log(data);
     console.log(JSON.stringify(data));
@@ -1050,6 +1050,115 @@ function updateBorderChargeLabels() {
       totalAmount.id = `totalAmount${newIndex}`;
   });
 }
+
+// Payment Methods Functions
+function togglePaymentRow(paymentType) {
+    const checkbox = document.getElementById(paymentType + '_payment');
+    const row = document.getElementById(paymentType + '-payment-row');
+    
+    if (checkbox.checked) {
+        if (!row) {
+            // Create new payment row
+            createPaymentRow(paymentType);
+        }
+    } else {
+        if (row) {
+            row.remove();
+        }
+    }
+    
+    calculateTotalPayment();
+}
+
+function createPaymentRow(paymentType) {
+    const container = document.getElementById('payment-rows-container');
+    const paymentTypeTitle = paymentType.charAt(0).toUpperCase() + paymentType.slice(1).replace('_', ' ');
+    
+    const rowHtml = `
+        <div id="${paymentType}-payment-row" class="payment-method-row" style="margin-bottom: 15px; padding: 15px; border: 1px solid #ddd; border-radius: 5px; background-color: #f9f9f9;">
+            <h5 style="margin-bottom: 10px; color: #333;">${paymentTypeTitle} Payment</h5>
+            <div style="display: flex; gap: 15px; align-items: center; flex-wrap: wrap;">
+                <div style="flex: 1; min-width: 200px;">
+                    <label for="${paymentType}_description">Description:</label>
+                    <input type="text" id="${paymentType}_description" name="${paymentType}_description" class="form-control" placeholder="${paymentTypeTitle} payment description">
+                </div>
+                <div style="flex: 1; min-width: 150px;">
+                    <label for="${paymentType}_amount">Amount:</label>
+                    <input type="number" id="${paymentType}_amount" name="${paymentType}_amount" class="form-control payment-amount" 
+                           step="0.01" min="0" placeholder="0.00" onchange="calculateTotalPayment()">
+                </div>
+            </div>
+        </div>
+    `;
+    
+    container.insertAdjacentHTML('beforeend', rowHtml);
+}
+
+function calculateTotalPayment() {
+    let totalPayment = 0;
+    const paymentAmounts = document.querySelectorAll('.payment-amount');
+    
+    paymentAmounts.forEach(input => {
+        const amount = parseFloat(input.value) || 0;
+        totalPayment += amount;
+    });
+    
+    // Update display
+    document.getElementById('total-payment-display').textContent = totalPayment.toFixed(2);
+    
+    // Calculate remaining amount
+    const remainingElement = document.getElementById('remaining-amount-display');
+    const amountRemainingElement = document.getElementById('amount-remaining');
+    
+    if (amountRemainingElement) {
+        // Use the server-calculated remaining amount as base
+        const originalRemaining = parseFloat(amountRemainingElement.textContent) || 0;
+        const newRemaining = Math.max(0, originalRemaining - totalPayment);
+        remainingElement.textContent = newRemaining.toFixed(2);
+    }
+}
+
+function setFullPayment() {
+    const amountRemainingElement = document.getElementById('amount-remaining');
+    
+    if (!amountRemainingElement) {
+        alert('Please select an invoice first to calculate full payment.');
+        return;
+    }
+    
+    const remainingAmount = parseFloat(amountRemainingElement.textContent) || 0;
+    
+    if (remainingAmount <= 0) {
+        alert('This invoice is already fully paid.');
+        return;
+    }
+    
+    // Get all active payment method checkboxes
+    const activeCheckboxes = document.querySelectorAll('input[name="payment_methods[]"]:checked');
+    
+    if (activeCheckboxes.length === 0) {
+        alert('Please select at least one payment method first.');
+        return;
+    }
+    
+    // Distribute the remaining amount among active payment methods
+    const amountPerMethod = remainingAmount / activeCheckboxes.length;
+    
+    activeCheckboxes.forEach(checkbox => {
+        const paymentType = checkbox.value;
+        const amountInput = document.getElementById(paymentType + '_amount');
+        if (amountInput) {
+            amountInput.value = amountPerMethod.toFixed(2);
+        }
+    });
+    
+    calculateTotalPayment();
+}
+
+// Initialize payment calculation on page load
+document.addEventListener('DOMContentLoaded', function() {
+    calculateTotalPayment();
+});
 
 
 
