@@ -167,7 +167,7 @@ $paymentService = new PaymentService($conn);
 
                       <div class="credit-balance-card">
                         <label class="credit-toggle" for="deductCredit">
-                          <input type="checkbox" id="deductCredit" name="deduct_credit" value="1">
+                          <input type="checkbox" id="deductCredit" name="deduct_credit" value="1" onchange="toggleCreditDeduction()">
                           <span>Deduct from customer credit</span>
                         </label>
                         <p class="credit-balance-text">
@@ -317,7 +317,9 @@ $paymentService = new PaymentService($conn);
                                         <div style="flex: 1; min-width: 150px;">
                                           <label for="cash_amount">Amount:</label>
                                           <input type="number" id="cash_amount" name="cash_amount" class="form-control payment-amount" 
-                                                 step="0.01" min="0" placeholder="0.00" onchange="calculateTotalPayment()">
+                                                 step="0.01" min="0" placeholder="0.00" 
+                                                 onchange="calculateTotalPayment()" 
+                                                 oninput="calculateTotalPayment()">
                                         </div>
                                       </div>
                                     </div>
@@ -332,7 +334,10 @@ $paymentService = new PaymentService($conn);
                                       </button>
                                       <div style="text-align: right;">
                                         <div style="margin-bottom: 5px;">
-                                          <strong>Total Payment: $<span id="total-payment-display">0.00</span></strong>
+                                          <strong>Total Payment: <span id="currency-display">AED</span> <span id="total-payment-display">0.00</span></strong>
+                                        </div>
+                                        <div style="margin-bottom: 5px; font-size: 12px; color: #666;">
+                                          <em>AED Equivalent: <span id="total-payment-aed-display">0.00</span></em>
                                         </div>
                                         <div style="color: #28a745;">
                                           <strong>Remaining: $<span id="remaining-amount-display"><?php echo isset($remaining) ? number_format($remaining, 2) : '0.00'; ?></span></strong>
@@ -788,7 +793,6 @@ document.addEventListener('DOMContentLoaded', function() {
 
 
 function collectFormData() {
-  calculateTotal();
   try {
     // Collect form data
     const date = document.getElementById('date').value;
@@ -798,18 +802,28 @@ function collectFormData() {
     const job = document.getElementById('jobs').value;
     const special_note = document.getElementById('special_note').value;
     
-    // Calculate total payment from payment methods instead of charges
+    // Calculate total payment from payment methods and collect individual amounts
     let totalPaymentAmount = 0;
-    const paymentAmounts = document.querySelectorAll('.payment-amount');
-    paymentAmounts.forEach(input => {
-        totalPaymentAmount += parseFloat(input.value) || 0;
-    });
+    let totalPaymentAmountAED = 0; // This will be the AED equivalent for backend
+    let cashAmount = 0;
+    let chequeAmount = 0;
+    let bankTransferAmount = 0;
     
+    // Get currency conversion rates
     const currencySelect = document.getElementById('globalCurrency');
     const selectedOption = currencySelect.options[currencySelect.selectedIndex];
     const currencyText = selectedOption.textContent.trim(); // e.g. "AED  3.685"
-
     const [currencyName, roe] = currencyText.split(/\s+/);
+    
+    // Get AED rate for conversion
+    let aedValue = null;
+    for (let i = 0; i < currencySelect.options.length; i++) {
+        let optionText = currencySelect.options[i].text;
+        if (optionText.split("\u00A0\u00A0")[0] === "AED") {
+            aedValue = optionText.split("\u00A0\u00A0")[1];
+            break;
+        }
+    }
     
     // Collect payment methods data
     const paymentMethods = [];
@@ -821,6 +835,26 @@ function collectFormData() {
         const descriptionInput = document.getElementById(method + '_description');
         
         if (amountInput && amountInput.value && parseFloat(amountInput.value) > 0) {
+            const amount = parseFloat(amountInput.value); // Amount in selected currency
+            totalPaymentAmount += amount; // Total in selected currency
+            
+            // Convert to AED for backend processing
+            const amountAED = amount * parseFloat(aedValue) / parseFloat(roe);
+            totalPaymentAmountAED += amountAED;
+            
+            // Store individual amounts (in selected currency)
+            switch(method) {
+                case 'cash':
+                    cashAmount = amount;
+                    break;
+                case 'cheque':
+                    chequeAmount = amount;
+                    break;
+                case 'bank_transfer':
+                    bankTransferAmount = amount;
+                    break;
+            }
+            
             paymentMethods.push(method);
         }
     });
@@ -855,8 +889,16 @@ function collectFormData() {
       customer: customer,
       invoice_no: job,
       special_note: special_note,
-      total: totalPaymentAmount,
-      description: description,      
+      total: totalPaymentAmount, // Total in selected currency
+      total_aed: totalPaymentAmountAED, // Total in AED for backend processing
+      cash_amount: cashAmount, // Individual amounts in selected currency
+      cheque_amount: chequeAmount,
+      bank_transfer_amount: bankTransferAmount,
+      cash_description: document.getElementById('cash_description') ? document.getElementById('cash_description').value : '',
+      cheque_description: document.getElementById('cheque_description') ? document.getElementById('cheque_description').value : '',
+      bank_transfer_description: document.getElementById('bank_transfer_description') ? document.getElementById('bank_transfer_description').value : '',
+      cheque_details: document.getElementById('cheque_details') ? document.getElementById('cheque_details').value : '',
+      bank_transfer_details: document.getElementById('bank_transfer_details') ? document.getElementById('bank_transfer_details').value : '',
       currency_name: currencyName,
       currency_roe: roe,
       deduct_credit: deductCredit,
@@ -875,6 +917,14 @@ function collectFormData() {
         if (descriptionInput) {
             data[method + '_description'] = descriptionInput.value;
         }
+        
+        // Add details field for cheque and bank_transfer
+        if (method === 'cheque' || method === 'bank_transfer') {
+            const detailsInput = document.getElementById(method + '_details');
+            if (detailsInput) {
+                data[method + '_details'] = detailsInput.value;
+            }
+        }
     });
     
     // Validation
@@ -885,6 +935,13 @@ function collectFormData() {
     
     if (paymentMethods.length === 0) {
         alert('Please select at least one payment method and enter an amount.');
+        return;
+    }
+    
+    // Validate that individual amounts sum to total (frontend validation)
+    const calculatedTotal = cashAmount + chequeAmount + bankTransferAmount;
+    if (Math.abs(calculatedTotal - totalPaymentAmount) > 0.01) {
+        alert(`Payment breakdown error: Individual amounts (${calculatedTotal.toFixed(2)}) don't match total (${totalPaymentAmount.toFixed(2)})`);
         return;
     }
 
@@ -972,8 +1029,8 @@ function calculateTotal() {
       grandTotal += amountAED;
   });
 
-  // Display the grand total
-  document.getElementById('total').value = grandTotal.toFixed(2);
+  // Note: Total field not available in this form
+  // document.getElementById('total').value = grandTotal.toFixed(2);
 }
 
 function addBorderChargeRow() {
@@ -1025,7 +1082,7 @@ function removeBorderChargeRow(button) {
 
   // Update all remaining rows' labels
   updateBorderChargeLabels();
-  calculateTotal(); // Recalculate total after removing a row
+  // calculateTotal(); // Removed - no charges table in this form
 }
 
 function updateBorderChargeLabels() {
@@ -1052,6 +1109,46 @@ function updateBorderChargeLabels() {
 }
 
 // Payment Methods Functions
+function toggleCreditDeduction() {
+    const creditCheckbox = document.getElementById('deductCredit');
+    const paymentCheckboxes = document.querySelectorAll('input[name="payment_methods[]"]');
+    
+    if (creditCheckbox.checked) {
+        // Disable non-cash payment method checkboxes and uncheck them
+        paymentCheckboxes.forEach(checkbox => {
+            if (checkbox.value !== 'cash') {
+                checkbox.disabled = true;
+                checkbox.checked = false; // Uncheck non-cash methods
+                
+                // Remove their payment rows if they exist
+                const row = document.getElementById(checkbox.value + '-payment-row');
+                if (row) {
+                    row.remove();
+                }
+            }
+        });
+        
+        // Ensure cash is checked and its row exists
+        const cashCheckbox = document.getElementById('cash_payment');
+        if (cashCheckbox) {
+            cashCheckbox.checked = true;
+            // Create cash payment row if it doesn't exist
+            const cashRow = document.getElementById('cash-payment-row');
+            if (!cashRow) {
+                createPaymentRow('cash');
+            }
+        }
+        
+        // Recalculate payment totals
+        calculateTotalPayment();
+    } else {
+        // Enable all payment method checkboxes
+        paymentCheckboxes.forEach(checkbox => {
+            checkbox.disabled = false;
+        });
+    }
+}
+
 function togglePaymentRow(paymentType) {
     const checkbox = document.getElementById(paymentType + '_payment');
     const row = document.getElementById(paymentType + '-payment-row');
@@ -1074,6 +1171,14 @@ function createPaymentRow(paymentType) {
     const container = document.getElementById('payment-rows-container');
     const paymentTypeTitle = paymentType.charAt(0).toUpperCase() + paymentType.slice(1).replace('_', ' ');
     
+    // Check if this payment type needs a details field
+    const needsDetails = paymentType === 'cheque' || paymentType === 'bank_transfer';
+    const detailsField = needsDetails ? `
+                <div style="flex: 1; min-width: 200px;">
+                    <label for="${paymentType}_details">Details:</label>
+                    <textarea id="${paymentType}_details" name="${paymentType}_details" class="form-control" rows="2" placeholder="${paymentTypeTitle} payment details (optional)"></textarea>
+                </div>` : '';
+    
     const rowHtml = `
         <div id="${paymentType}-payment-row" class="payment-method-row" style="margin-bottom: 15px; padding: 15px; border: 1px solid #ddd; border-radius: 5px; background-color: #f9f9f9;">
             <h5 style="margin-bottom: 10px; color: #333;">${paymentTypeTitle} Payment</h5>
@@ -1082,10 +1187,13 @@ function createPaymentRow(paymentType) {
                     <label for="${paymentType}_description">Description:</label>
                     <input type="text" id="${paymentType}_description" name="${paymentType}_description" class="form-control" placeholder="${paymentTypeTitle} payment description">
                 </div>
+                ${detailsField}
                 <div style="flex: 1; min-width: 150px;">
                     <label for="${paymentType}_amount">Amount:</label>
                     <input type="number" id="${paymentType}_amount" name="${paymentType}_amount" class="form-control payment-amount" 
-                           step="0.01" min="0" placeholder="0.00" onchange="calculateTotalPayment()">
+                           step="0.01" min="0" placeholder="0.00" 
+                           onchange="calculateTotalPayment()" 
+                           oninput="calculateTotalPayment()">
                 </div>
             </div>
         </div>
@@ -1096,24 +1204,49 @@ function createPaymentRow(paymentType) {
 
 function calculateTotalPayment() {
     let totalPayment = 0;
+    let totalPaymentAED = 0;
     const paymentAmounts = document.querySelectorAll('.payment-amount');
+    
+    // Get currency conversion rates
+    const currencySelect = document.getElementById('globalCurrency');
+    const selectedOption = currencySelect.options[currencySelect.selectedIndex];
+    const currencyText = selectedOption.textContent.trim(); // e.g. "AED  3.685"
+    const [currencyName, roe] = currencyText.split(/\s+/);
+    
+    // Get AED rate for conversion
+    let aedValue = null;
+    for (let i = 0; i < currencySelect.options.length; i++) {
+        let optionText = currencySelect.options[i].text;
+        if (optionText.split("\u00A0\u00A0")[0] === "AED") {
+            aedValue = optionText.split("\u00A0\u00A0")[1];
+            break;
+        }
+    }
     
     paymentAmounts.forEach(input => {
         const amount = parseFloat(input.value) || 0;
         totalPayment += amount;
+        
+        // Convert to AED
+        if (aedValue && roe) {
+            const amountAED = amount * parseFloat(aedValue) / parseFloat(roe);
+            totalPaymentAED += amountAED;
+        }
     });
     
     // Update display
+    document.getElementById('currency-display').textContent = currencyName;
     document.getElementById('total-payment-display').textContent = totalPayment.toFixed(2);
+    document.getElementById('total-payment-aed-display').textContent = totalPaymentAED.toFixed(2);
     
-    // Calculate remaining amount
+    // Calculate remaining amount (should be in AED since invoice totals are in AED)
     const remainingElement = document.getElementById('remaining-amount-display');
     const amountRemainingElement = document.getElementById('amount-remaining');
     
     if (amountRemainingElement) {
         // Use the server-calculated remaining amount as base
         const originalRemaining = parseFloat(amountRemainingElement.textContent) || 0;
-        const newRemaining = Math.max(0, originalRemaining - totalPayment);
+        const newRemaining = Math.max(0, originalRemaining - totalPaymentAED); // Use AED amount
         remainingElement.textContent = newRemaining.toFixed(2);
     }
 }
@@ -1126,9 +1259,9 @@ function setFullPayment() {
         return;
     }
     
-    const remainingAmount = parseFloat(amountRemainingElement.textContent) || 0;
+    const remainingAmountAED = parseFloat(amountRemainingElement.textContent) || 0;
     
-    if (remainingAmount <= 0) {
+    if (remainingAmountAED <= 0) {
         alert('This invoice is already fully paid.');
         return;
     }
@@ -1141,8 +1274,30 @@ function setFullPayment() {
         return;
     }
     
-    // Distribute the remaining amount among active payment methods
-    const amountPerMethod = remainingAmount / activeCheckboxes.length;
+    // Get currency conversion rates to convert AED back to selected currency
+    const currencySelect = document.getElementById('globalCurrency');
+    const selectedOption = currencySelect.options[currencySelect.selectedIndex];
+    const currencyText = selectedOption.textContent.trim(); // e.g. "AED  3.685"
+    const [currencyName, roe] = currencyText.split(/\s+/);
+    
+    // Get AED rate for conversion
+    let aedValue = null;
+    for (let i = 0; i < currencySelect.options.length; i++) {
+        let optionText = currencySelect.options[i].text;
+        if (optionText.split("\u00A0\u00A0")[0] === "AED") {
+            aedValue = optionText.split("\u00A0\u00A0")[1];
+            break;
+        }
+    }
+    
+    // Convert remaining AED amount to selected currency
+    let remainingAmountInSelectedCurrency = remainingAmountAED;
+    if (aedValue && roe && currencyName !== 'AED') {
+        remainingAmountInSelectedCurrency = remainingAmountAED * parseFloat(roe) / parseFloat(aedValue);
+    }
+    
+    // Distribute the remaining amount among active payment methods (in selected currency)
+    const amountPerMethod = remainingAmountInSelectedCurrency / activeCheckboxes.length;
     
     activeCheckboxes.forEach(checkbox => {
         const paymentType = checkbox.value;
@@ -1159,6 +1314,12 @@ function setFullPayment() {
 document.addEventListener('DOMContentLoaded', function() {
     calculateTotalPayment();
 });
+
+// Function called when global currency changes
+function changeCurrencyForAllRows() {
+    // Since this form doesn't have border charges, we just need to recalculate payment totals
+    calculateTotalPayment();
+}
 
 
 

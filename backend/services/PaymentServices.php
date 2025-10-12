@@ -93,13 +93,20 @@ class PaymentService {
                 'invoice_number' => $invoiceNumber,
                 'receipt_no' => $receiptNo,
                 'payment_amount' => $amountFromPayment,
-                'payment_type' => 'payment',
+                'cash_amount' => $params['cash_amount'] ?? 0.00,
+                'cheque_amount' => $params['cheque_amount'] ?? 0.00,
+                'bank_transfer_amount' => $params['bank_transfer_amount'] ?? 0.00,
+                'payment_type' => $params['payment_type'] ?? 'payment',
                 'full_payment' => (round($amountFromPayment + $amountFromCredit, 0) >= round($remainingBalance + $amountFromPayment, 0)),
                 'payment_date' => $paymentDate,
                 'mode_of_payment' => $modeOfPayment,
                 'salesperson' => $salesperson,
                 'note' => $note,
-                'description' => $description,
+                'description_cash' => $params['description_cash'] ?? '',
+                'description_cheque' => $params['description_cheque'] ?? '',
+                'description_bank_transfer' => $params['description_bank_transfer'] ?? '',
+                'bank_details' => $params['bank_details'] ?? '',
+                'cheque_details' => $params['cheque_details'] ?? '',
                 'currency_name' => $currencyName,
                 'currency_roe' => $currencyRoe
             ]);
@@ -117,7 +124,11 @@ class PaymentService {
                     'mode_of_payment' => 'credit',
                     'salesperson' => $salesperson,
                     'note' => $note,
-                    'description' => $description,
+                    'description_cash' => 'Credit deduction',
+                    'description_cheque' => '',
+                    'description_bank_transfer' => '',
+                    'bank_details' => '',
+                    'cheque_details' => '',
                     'currency_name' => $currencyName,
                     'currency_roe' => $currencyRoe
                 ]);
@@ -216,31 +227,48 @@ class PaymentService {
         $stmt = $this->conn->prepare("
             INSERT INTO payment_receipts (
                 customer_id, invoice_number, receipt_no, payment_amount, 
-                payment_type, full_payment, payment_date, mode_of_payment, 
-                salesperson, note, description, currency_name, currency_roe
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                cash_amount, cheque_amount, bank_transfer_amount, payment_type, 
+                full_payment, payment_date, mode_of_payment, 
+                salesperson, note, description_cash, description_cheque, description_bank_transfer, 
+                bank_details, cheque_details, currency_name, currency_roe
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ");
         
         // Ensure all variables are properly set for bind_param
+        $cash_amount = $data['cash_amount'] ?? 0.00;
+        $cheque_amount = $data['cheque_amount'] ?? 0.00;
+        $bank_transfer_amount = $data['bank_transfer_amount'] ?? 0.00;
+        $payment_type = $data['payment_type'] ?? 'payment';
         $salesperson = $data['salesperson'] ?? '';
         $note = $data['note'] ?? '';
-        $description = $data['description'] ?? '';
+        $description_cash = $data['description_cash'] ?? '';
+        $description_cheque = $data['description_cheque'] ?? '';
+        $description_bank_transfer = $data['description_bank_transfer'] ?? '';
+        $bank_details = $data['bank_details'] ?? '';
+        $cheque_details = $data['cheque_details'] ?? '';
         $currency_name = $data['currency_name'] ?? 'AED';
         $currency_roe = $data['currency_roe'] ?? 1.0;
         
         $stmt->bind_param(
-            "issdsissssssd",
+            "issddddsississsssssd",
             $data['customer_id'],
             $data['invoice_number'],
             $data['receipt_no'],
             $data['payment_amount'],
-            $data['payment_type'],
+            $cash_amount,
+            $cheque_amount,
+            $bank_transfer_amount,
+            $payment_type,
             $data['full_payment'],
             $data['payment_date'],
             $data['mode_of_payment'],
             $salesperson,
             $note,
-            $description,
+            $description_cash,
+            $description_cheque,
+            $description_bank_transfer,
+            $bank_details,
+            $cheque_details,
             $currency_name,
             $currency_roe
         );
@@ -489,13 +517,20 @@ class PaymentService {
                 'invoice_number' => '0',
                 'receipt_no' => $receiptNo,
                 'payment_amount' => $amount,
+                'cash_amount' => 0.00,
+                'cheque_amount' => 0.00,
+                'bank_transfer_amount' => 0.00,
                 'payment_type' => 'credit_topup',
                 'full_payment' => 0,
                 'payment_date' => date('Y-m-d H:i:s'),
                 'mode_of_payment' => 'credit',
                 'salesperson' => '',
                 'note' => $note,
-                'description' => $description,
+                'description_cash' => $description,
+                'description_cheque' => '',
+                'description_bank_transfer' => '',
+                'bank_details' => '',
+                'cheque_details' => '',
                 'currency_name' => 'AED',
                 'currency_roe' => 1.0
             ]);

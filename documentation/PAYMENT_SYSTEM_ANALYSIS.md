@@ -134,6 +134,22 @@
 
 
 
+---
+
+## Database Schema Update Required
+
+### ALTER TABLE for payment_receipts
+
+```sql
+-- Add the new amount columns for each payment method
+ALTER TABLE payment_receipts 
+ADD COLUMN cash_amount DECIMAL(10,2) DEFAULT 0.00 AFTER payment_amount,
+ADD COLUMN cheque_amount DECIMAL(10,2) DEFAULT 0.00 AFTER cash_amount,
+ADD COLUMN bank_transfer_amount DECIMAL(10,2) DEFAULT 0.00 AFTER cheque_amount;
+```
+
+---
+
 ## Recommended Restructure
 
 ### Phase 1: Database Schema Improvements (Safe Migration)
@@ -142,14 +158,28 @@
 
 ```sql
 -- Add to payment_receipts (without breaking existing data)
+-- Add to payment_receipts (without breaking existing data)
 ALTER TABLE payment_receipts 
-ADD COLUMN payment_type ENUM('payment', 'credit_topup', 'credit_deduction') DEFAULT 'payment',
+CHANGE COLUMN description description_cash varchar(200),
+
+ADD COLUMN payment_type ENUM('payment', 'credit_topup', 'credit_deduction', 'multiple') DEFAULT 'payment',
+ADD COLUMN cash_amount DECIMAL(10,2) DEFAULT 0.00 COMMENT 'Cash portion of payment',
+ADD COLUMN cheque_amount DECIMAL(10,2) DEFAULT 0.00 COMMENT 'Cheque portion of payment', 
+ADD COLUMN bank_transfer_amount DECIMAL(10,2) DEFAULT 0.00 COMMENT 'Bank transfer portion of payment',
 ADD COLUMN transaction_status ENUM('pending', 'completed', 'cancelled') DEFAULT 'completed',
 ADD COLUMN related_payment_id INT NULL COMMENT 'For refunds/adjustments',
 ADD COLUMN created_by INT NULL COMMENT 'User ID who created this',
 ADD INDEX idx_customer_invoice (customer_id, invoice_number),
 ADD INDEX idx_receipt_no (receipt_no),
-ADD INDEX idx_payment_date (payment_date);
+ADD INDEX idx_payment_date (payment_date),
+ADD COLUMN description_cheque varchar(200) DEFAULT '' AFTER description_cash,
+ADD COLUMN description_bank_transfer varchar(200) DEFAULT '' AFTER description_cheque,
+ADD COLUMN bank_details varchar(500) DEFAULT '' AFTER description_bank_transfer,
+ADD COLUMN cheque_details varchar(500) DEFAULT '' AFTER bank_details,
+ADD CONSTRAINT chk_payment_breakdown CHECK (
+    (payment_type != 'multiple') OR 
+    (payment_amount = cash_amount + cheque_amount + bank_transfer_amount)
+);
 
 -- Add to shipments
 ALTER TABLE shipments
